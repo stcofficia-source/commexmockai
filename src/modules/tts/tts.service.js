@@ -34,7 +34,8 @@ async function generateSpeechUrl(text) {
 
     // INDUSTRY STANDARD: Return a streaming proxy URL instantly.
     // The client will hit this URL, and the server will stream bits from OpenAI.
-    const publicUrl = `${env.SERVER_URL}/api/mock/tts/stream?text=${encodeURIComponent(text)}`;
+    const cleanBaseUrl = env.SERVER_URL.replace(/\/+$/, '');
+    const publicUrl = `${cleanBaseUrl}/api/mock/tts/stream?text=${encodeURIComponent(text)}`;
 
     logger.debug({ publicUrl }, 'Generated Instant TTS Stream URL');
 
