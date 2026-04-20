@@ -23,21 +23,28 @@ class TokenService {
     }
  
     try {
-      const response = await axios.get(`${env.STC_API_BASE_URL}/v1/auth/check-auth`, {
+      const url = `${env.STC_API_BASE_URL}/v1/auth/check-auth`;
+      logger.debug({ url }, 'Attempting remote token verification');
+
+      const response = await axios.get(url, {
         headers: { Authorization: `Bearer ${token}` }
       });
 
       if (response.data.success && response.data.data) {
-        // Map PHP structure to expected JS structure if needed
         return response.data.data;
       }
       
       throw new AuthenticationError('Invalid session on main API');
     } catch (err) {
       if (err.response?.status === 401) {
+        logger.warn('Remote API returned 401: Token invalid/expired');
         throw new AuthenticationError('Session expired');
       }
-      logger.error({ err: err.message }, 'Token remote verification error');
+      logger.error({ 
+        url: `${env.STC_API_BASE_URL}/v1/auth/check-auth`,
+        err: err.message,
+        status: err.response?.status 
+      }, 'Token remote verification failure');
       throw new AuthenticationError('Authentication service unavailable');
     }
   }
