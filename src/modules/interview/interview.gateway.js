@@ -6,6 +6,7 @@ const { WebSocketServer } = require('ws');
 const { WS_EVENTS } = require('../../config/constants');
 const interviewService = require('./interview.service');
 const logger = require('../../core/logger');
+const { authorizeSocket } = require('../../core/middleware/auth');
 
 // Track active connections
 const activeConnections = new Map();
@@ -77,7 +78,7 @@ function initWebSocket(server) {
     clearInterval(heartbeat);
   });
 
-  logger.info('✅ WebSocket server initialized at /ws/interview');
+  logger.info('WebSocket server initialized at /ws/interview');
   return wss;
 }
 
@@ -124,6 +125,20 @@ async function handleMessage(clientId, ws, message) {
  */
 async function handleSessionStart(clientId, ws, data) {
   const { userId, jobRoleId, jobRoleTitle, difficulty, maxQuestions, token } = data || {};
+
+  // 1. Mandatory Auth Check (Industry Standard)
+  const user = await authorizeSocket(token);
+
+  if (!user) {
+    logger.warn({ clientId, userId }, 'WS: Unauthorized session start attempt');
+    return sendError(ws, 'UNAUTHORIZED', 'Invalid or expired authentication token');
+  }
+
+  // 2. Validate user ID matches token
+  if (user.id != userId) {
+      logger.warn({ clientId, providedId: userId,tokenId: user.id }, 'WS: User ID mismatch in token');
+      return sendError(ws, 'UNAUTHORIZED', 'User ID mismatch');
+  }
 
   if (!userId || !jobRoleId || !jobRoleTitle) {
     return sendError(ws, 'VALIDATION_ERROR', 'userId, jobRoleId, and jobRoleTitle are required');

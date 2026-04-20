@@ -50,8 +50,11 @@ app.get('/health', (req, res) => {
   });
 });
 
-// Mock Interview Module Routes
-app.use('/api/mock', require('./modules/interview/interview.routes'));
+// Auth Middleware
+const { authenticate } = require('./core/middleware/auth');
+
+// Mock Interview Module Routes (Protected)
+app.use('/api/mock', authenticate, require('./modules/interview/interview.routes'));
 
 // API version info
 app.get('/api/info', (req, res) => {

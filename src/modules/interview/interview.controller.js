@@ -54,7 +54,8 @@ const getRoleDetail = async (req, res, next) => {
 
 const getReport = async (req, res, next) => {
   try {
-    const data = await interviewService.getReport(req.params.sessionId);
+    const token = req.headers.authorization?.split(' ')[1];
+    const data = await interviewService.getReport(req.params.sessionId, token);
     res.json({ success: true, data });
   } catch (err) {
     next(err);
@@ -63,8 +64,16 @@ const getReport = async (req, res, next) => {
 
 const getHistory = async (req, res, next) => {
   try {
-    const { user_id, page, limit } = req.query;
-    const data = await interviewService.getHistory(user_id, page, limit);
+    // SECURITY: Use the user ID from the verified token, NOT from query params
+    const userId = req.user.id;
+    const token = req.headers.authorization?.split(' ')[1];
+    const { page, limit } = req.query;
+    
+    if (!userId) {
+      return res.status(401).json({ success: false, message: 'User ID missing from session' });
+    }
+
+    const data = await interviewService.getHistory(userId, page, limit, token);
     res.json({ success: true, data });
   } catch (err) {
     next(err);

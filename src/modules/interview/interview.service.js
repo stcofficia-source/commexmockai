@@ -335,9 +335,11 @@ class InterviewService {
   /**
    * Get report from PHP
    */
-  async getReport(sessionId) {
+  async getReport(sessionId, token) {
     try {
-      const resp = await axios.get(`${env.STC_API_BASE_URL}/v1/mock/interviews/${sessionId}/report`);
+      const resp = await axios.get(`${env.STC_API_BASE_URL}/v1/mock/interviews/${sessionId}/report`, {
+        headers: token ? { Authorization: `Bearer ${token}` } : {}
+      });
       return resp.data.data;
     } catch (err) {
       const phpError = err.response?.data?.message || err.message;
@@ -349,10 +351,11 @@ class InterviewService {
   /**
    * Get interview history from PHP
    */
-  async getHistory(userId, page, limit) {
+  async getHistory(userId, page, limit, token) {
     try {
       const resp = await axios.get(`${env.STC_API_BASE_URL}/v1/mock/history`, {
-        params: { user_id: userId, page, limit }
+        params: { user_id: userId, page, limit },
+        headers: token ? { Authorization: `Bearer ${token}` } : {}
       });
       return resp.data.data;
     } catch (err) {
