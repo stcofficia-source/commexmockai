@@ -13,7 +13,7 @@ router.get('/departments/:id/roles', validate(getRolesSchema), controller.getRol
 router.get('/roles/:id', controller.getRoleDetail);
 router.get('/interviews/:sessionId/report', controller.getReport);
 router.get('/history', validate(getHistorySchema), controller.getHistory);
-router.post('/stt/upload', validate(uploadAudioSchema), controller.uploadAnswerAudio);
+router.post('/stt/upload', controller.upload, validate(uploadAudioSchema), controller.uploadAnswerAudio);
 router.get('/tts/stream', require('../tts/tts.controller').streamTts);
 
 module.exports = router;
