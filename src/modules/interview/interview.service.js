@@ -119,10 +119,8 @@ class InterviewService {
       currentQuestionText: questionText,
     });
 
-    // Persist interview start to PHP API
-    this.persistInterviewStart(userId, jobRoleId, session.sessionId, maxQuestions).catch((err) =>
-      logger.error({ err: err.message }, 'Failed to persist interview start')
-    );
+    // Persist interview start to PHP API (best-effort, but do it BEFORE first answer to avoid "Interview not found")
+    await this.persistInterviewStart(userId, jobRoleId, session.sessionId, maxQuestions);
 
     return {
       sessionId: session.sessionId,
@@ -308,10 +306,11 @@ class InterviewService {
    */
   async persistInterviewStart(userId, jobRoleId, sessionId, maxQuestions) {
     try {
-      await axiosRequestPreserveMethodOnRedirect({
+      const resp = await axiosRequestPreserveMethodOnRedirect({
         method: 'post',
         url: `${env.STC_API_BASE_URL}/v1/mock/interviews`,
         headers: { 'content-type': 'application/json' },
+        timeout: 8000,
         data: {
         user_id: userId,
         job_role_id: jobRoleId,
@@ -320,8 +319,12 @@ class InterviewService {
         status: 'in_progress',
         },
       });
+      const createdId = resp?.data?.data?.id;
+      logger.debug({ sessionId, createdId }, 'PHP API: interview created');
+      return createdId || null;
     } catch (err) {
       logger.error({ err: summarizeAxiosError(err), sessionId }, 'PHP API: persistInterviewStart failed');
+      return null;
     }
   }
 
@@ -345,18 +348,33 @@ class InterviewService {
       const url = `${env.STC_API_BASE_URL}/v1/mock/interviews/${sessionId}/questions`;
       const methodsToTry = ['post', 'put', 'patch'];
 
+      // If the interview row isn't created yet (race), create it once then retry.
+      // This avoids losing answers when the candidate replies very quickly after session start.
+      let hasCreatedInterview = false;
+
       for (const method of methodsToTry) {
         try {
           await axiosRequestPreserveMethodOnRedirect({
             method,
             url,
             headers: { 'content-type': 'application/json' },
+            timeout: 8000,
             data: payload,
           });
           logger.debug({ sessionId, qNum: questionData.questionNumber, method }, 'Synced question to PHP API');
           return;
         } catch (err) {
           const status = err?.response?.status;
+          const message = err?.response?.data?.message;
+
+          if (!hasCreatedInterview && status === 404 && typeof message === 'string' && message.toLowerCase().includes('interview not found')) {
+            const session = await sessionManager.getSession(sessionId);
+            if (session) {
+              hasCreatedInterview = true;
+              await this.persistInterviewStart(session.userId, session.jobRoleId, sessionId, session.maxQuestions);
+              continue;
+            }
+          }
 
           // Common production issue: server redirects and some clients convert POST -> GET.
           // Another common case: route changed to PUT/PATCH. If we get 405, try other methods.
