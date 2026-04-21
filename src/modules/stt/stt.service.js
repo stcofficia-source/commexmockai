@@ -7,6 +7,17 @@ const env = require('../../config/env');
 const logger = require('../../core/logger');
 
 const ASSEMBLYAI_BASE = 'https://api.assemblyai.com/v2';
+const DEFAULT_SPEECH_MODELS = ['universal-2'];
+
+function getSpeechModels() {
+  const raw = (env.ASSEMBLYAI_SPEECH_MODELS || '').trim();
+  if (!raw) return DEFAULT_SPEECH_MODELS;
+  const models = raw
+    .split(',')
+    .map((m) => m.trim())
+    .filter(Boolean);
+  return models.length ? models : DEFAULT_SPEECH_MODELS;
+}
 
 /**
  * Transcribe audio buffer to text using AssemblyAI
@@ -47,8 +58,8 @@ async function transcribeAudio(audioBuffer, contentType = 'audio/webm') {
         audio_url: audioUrl,
         language_code: 'en',
         // `speech_model` is deprecated by AssemblyAI; use `speech_models` instead.
-        // Keep behavior equivalent to the old "best" model selection.
-        speech_models: ['best'],
+        // As of 2026-04-21, accepted values include: universal-3-pro, universal-2.
+        speech_models: getSpeechModels(),
         punctuate: true,
         format_text: true,
         disfluencies: false, // REMOVES "Yeah, Yeah, Uh, Um"

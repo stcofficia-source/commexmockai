@@ -22,6 +22,8 @@ const env = {
 
   // AssemblyAI
   ASSEMBLYAI_API_KEY: process.env.ASSEMBLYAI_API_KEY || '',
+  // Comma-separated list. As of 2026-04-21 AssemblyAI accepts: universal-3-pro, universal-2
+  ASSEMBLYAI_SPEECH_MODELS: process.env.ASSEMBLYAI_SPEECH_MODELS || '',
 
   // STC API
   STC_API_BASE_URL: process.env.STC_API_BASE_URL || 'http://192.168.29.244:8000',
