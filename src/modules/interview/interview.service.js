@@ -11,6 +11,49 @@ const axios = require('axios');
 const env = require('../../config/env');
 const { DEPARTMENTS, JOB_ROLES } = require('./interview.data');
 
+const REDIRECT_STATUSES = new Set([301, 302, 303, 307, 308]);
+
+function getAllowMethods(err) {
+  const allow = err?.response?.headers?.allow;
+  if (!allow || typeof allow !== 'string') return [];
+  return allow
+    .split(',')
+    .map((m) => m.trim().toUpperCase())
+    .filter(Boolean);
+}
+
+function summarizeAxiosError(err) {
+  const status = err?.response?.status;
+  const statusText = err?.response?.statusText;
+  const allow = err?.response?.headers?.allow;
+  const location = err?.response?.headers?.location;
+  const dataMessage = err?.response?.data?.message;
+  const message = dataMessage || err?.message;
+
+  return {
+    status,
+    statusText,
+    allow,
+    location,
+    message,
+  };
+}
+
+async function axiosRequestPreserveMethodOnRedirect(config, maxRedirects = 3) {
+  const requestConfig = { ...config, maxRedirects: 0 };
+  try {
+    return await axios(requestConfig);
+  } catch (err) {
+    const status = err?.response?.status;
+    const location = err?.response?.headers?.location;
+    if (status && REDIRECT_STATUSES.has(status) && location && maxRedirects > 0) {
+      const nextUrl = new URL(location, requestConfig.url).toString();
+      return axiosRequestPreserveMethodOnRedirect({ ...requestConfig, url: nextUrl }, maxRedirects - 1);
+    }
+    throw err;
+  }
+}
+
 class InterviewService {
   /**
    * Get all departments from local data
@@ -265,15 +308,20 @@ class InterviewService {
    */
   async persistInterviewStart(userId, jobRoleId, sessionId, maxQuestions) {
     try {
-      await axios.post(`${env.STC_API_BASE_URL}/v1/mock/interviews`, {
+      await axiosRequestPreserveMethodOnRedirect({
+        method: 'post',
+        url: `${env.STC_API_BASE_URL}/v1/mock/interviews`,
+        headers: { 'content-type': 'application/json' },
+        data: {
         user_id: userId,
         job_role_id: jobRoleId,
         session_id: sessionId,
         total_questions: maxQuestions,
         status: 'in_progress',
+        },
       });
     } catch (err) {
-      logger.error({ err: err.message }, 'PHP API: persistInterviewStart failed');
+      logger.error({ err: summarizeAxiosError(err), sessionId }, 'PHP API: persistInterviewStart failed');
     }
   }
 
@@ -294,11 +342,36 @@ class InterviewService {
         ai_feedback: questionData.feedback,
       };
 
-      await axios.post(`${env.STC_API_BASE_URL}/v1/mock/interviews/${sessionId}/questions`, payload);
-      logger.debug({ sessionId, qNum: questionData.questionNumber }, 'Synced question to PHP API');
+      const url = `${env.STC_API_BASE_URL}/v1/mock/interviews/${sessionId}/questions`;
+      const methodsToTry = ['post', 'put', 'patch'];
+
+      for (const method of methodsToTry) {
+        try {
+          await axiosRequestPreserveMethodOnRedirect({
+            method,
+            url,
+            headers: { 'content-type': 'application/json' },
+            data: payload,
+          });
+          logger.debug({ sessionId, qNum: questionData.questionNumber, method }, 'Synced question to PHP API');
+          return;
+        } catch (err) {
+          const status = err?.response?.status;
+
+          // Common production issue: server redirects and some clients convert POST -> GET.
+          // Another common case: route changed to PUT/PATCH. If we get 405, try other methods.
+          if (status === 405) {
+            const allowMethods = getAllowMethods(err);
+            const nextMethod = methodsToTry.find((m) => m !== method && (!allowMethods.length || allowMethods.includes(m.toUpperCase())));
+            if (nextMethod) continue;
+          }
+
+          // Non-405 errors (401/403/404/422/500) are not recoverable by switching methods.
+          throw err;
+        }
+      }
     } catch (err) {
-      const errorMsg = err.response?.data?.message || err.message;
-      logger.error({ err: errorMsg, sessionId }, 'PHP API: persistQuestion failed');
+      logger.error({ err: summarizeAxiosError(err), sessionId }, 'PHP API: persistQuestion failed');
     }
   }
 
@@ -324,11 +397,15 @@ class InterviewService {
         duration_seconds: summary.duration,
       };
 
-      await axios.put(`${env.STC_API_BASE_URL}/v1/mock/interviews/${sessionId}`, payload);
+      await axiosRequestPreserveMethodOnRedirect({
+        method: 'put',
+        url: `${env.STC_API_BASE_URL}/v1/mock/interviews/${sessionId}`,
+        headers: { 'content-type': 'application/json' },
+        data: payload,
+      });
       logger.info({ sessionId }, 'Synced interview completion to PHP API');
     } catch (err) {
-      const errorMsg = err.response?.data?.message || err.message;
-      logger.error({ err: errorMsg, sessionId }, 'PHP API: persistInterviewComplete failed');
+      logger.error({ err: summarizeAxiosError(err), sessionId }, 'PHP API: persistInterviewComplete failed');
     }
   }
 

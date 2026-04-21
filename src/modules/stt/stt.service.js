@@ -46,7 +46,9 @@ async function transcribeAudio(audioBuffer, contentType = 'audio/webm') {
       {
         audio_url: audioUrl,
         language_code: 'en',
-        speech_model: 'best',
+        // `speech_model` is deprecated by AssemblyAI; use `speech_models` instead.
+        // Keep behavior equivalent to the old "best" model selection.
+        speech_models: ['best'],
         punctuate: true,
         format_text: true,
         disfluencies: false, // REMOVES "Yeah, Yeah, Uh, Um"
