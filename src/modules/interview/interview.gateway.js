@@ -124,7 +124,7 @@ async function handleMessage(clientId, ws, message) {
  * Handle session start — initialize interview and send first question
  */
 async function handleSessionStart(clientId, ws, data) {
-  const { userId, jobRoleId, jobRoleTitle, difficulty, maxQuestions, token } = data || {};
+  const { userId, jobRoleId, jobRoleTitle, difficulty, maxQuestions, token, sessionType } = data || {};
 
   // 1. Mandatory Auth Check (Industry Standard)
   const user = await authorizeSocket(token);
@@ -152,7 +152,8 @@ async function handleSessionStart(clientId, ws, data) {
       jobRoleId,
       jobRoleTitle,
       difficulty || 'mid',
-      maxQuestions || 10
+      maxQuestions || 10,
+      sessionType || 'interview'
     );
 
     // Update connection metadata

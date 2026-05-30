@@ -93,17 +93,18 @@ class InterviewService {
   /**
    * Start a new interview session
    */
-  async startSession(userId, jobRoleId, jobRoleTitle, difficulty, maxQuestions) {
+  async startSession(userId, jobRoleId, jobRoleTitle, difficulty, maxQuestions, sessionType = 'interview') {
     const session = await sessionManager.createSession(
       userId,
       jobRoleId,
       jobRoleTitle,
       difficulty,
-      maxQuestions
+      maxQuestions,
+      sessionType
     );
 
     // Generate first question
-    const questionText = await openaiService.generateFirstQuestion(jobRoleTitle, difficulty);
+    const questionText = await openaiService.generateFirstQuestion(jobRoleTitle, difficulty, sessionType);
 
     // Generate TTS URL (optional — client can use on-device TTS)
     let audioUrl = '';
@@ -183,7 +184,8 @@ class InterviewService {
       session.jobRoleTitle,
       session.currentQuestionText,
       transcript,
-      session.difficulty
+      session.difficulty,
+      session.sessionType
     );
 
     // Generate NEXT QUESTION immediately using faster mini model
@@ -193,7 +195,8 @@ class InterviewService {
           session.jobRoleTitle,
           session.difficulty,
           [...session.history, { question: session.currentQuestionText, answerSummary: tempAnswerSummary }],
-          sessionManager.getSessionSummary(session).overallScore
+          sessionManager.getSessionSummary(session).overallScore,
+          session.sessionType
         );
 
     // [SPEED UP] Emit partial result with next question text immediately if callback provided
@@ -285,7 +288,7 @@ class InterviewService {
     const summary = sessionManager.getSessionSummary(session);
 
     // Generate AI-powered final report
-    const report = await openaiService.generateFinalReport(session.jobRoleTitle, summary);
+    const report = await openaiService.generateFinalReport(session.jobRoleTitle, summary, session.sessionType);
 
     // Persist final results to PHP API
     this.persistInterviewComplete(sessionId, summary, report).catch((err) =>

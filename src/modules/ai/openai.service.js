@@ -26,7 +26,19 @@ function initOpenAI() {
 /**
  * Generate the first interview question
  */
-async function generateFirstQuestion(jobRoleTitle, difficulty) {
+async function generateFirstQuestion(jobRoleTitle, difficulty, sessionType = 'interview') {
+  if (sessionType === 'conversation') {
+    const prompt = `You are playing the role of ${jobRoleTitle} in an everyday, real-life scenario. You are starting a warm, friendly, natural casual dialogue with the user.
+Task: Generate the FIRST dialogue opening. 
+MANDATORY: Start with a natural greeting and a friendly question to engage the user (e.g., if you are a Barista, welcome them and ask what they would like to order).
+
+Rules:
+- THE 3-LINE LAW: The dialogue MUST BE 1 to 3 lines max. NEVER exceed this.
+- HUMAN TOUCH: Speak like a real, warm person. Do not use robotic prefixes.
+- Return ONLY your dialogue text. No numbering or prefixes.`;
+    return await callOpenAI(prompt);
+  }
+
   const prompt = `You are a Senior University Placement Officer and Interviewer. You are conducting a mock interview for a COLLEGE STUDENT (Fresher) applying for the position of "${jobRoleTitle}".
 Difficulty level: ${difficulty}
 
@@ -46,8 +58,28 @@ Rules:
 /**
  * Evaluate a candidate's answer
  */
-async function evaluateAnswer(jobRoleTitle, questionText, answerText, difficulty) {
-  const prompt = `You are an expert interviewer evaluating a candidate's answer for the "${jobRoleTitle}" position.
+async function evaluateAnswer(jobRoleTitle, questionText, answerText, difficulty, sessionType = 'interview') {
+  let prompt = '';
+  if (sessionType === 'conversation') {
+    prompt = `You are a friendly communication coach evaluating a user's dialogue response in an everyday conversation scenario where the other person was a "${jobRoleTitle}".
+Question asked by ${jobRoleTitle}: "${questionText}"
+User's response: "${answerText}"
+
+Evaluate the response on these 4 criteria (score 0-10 each):
+1. clarity - How clear and understandable is the response?
+2. confidence - How confident and smooth does the response feel?
+3. technical - In this conversation context, "technical" represents Grammatical accuracy, vocabulary range, and conversational appropriateness.
+4. communication - How well does the user keep the conversation going and engage?
+
+Also provide brief feedback (1-2 sentences). 
+STRICT SCORING RULES:
+- If the response is COMPLETELY off-topic, nonsense, or gibberish, set scores to 0.
+- Otherwise, score it fairly based on everyday conversational language, not strict corporate interview standards.
+
+Return ONLY a valid JSON object in this exact format:
+{"clarity":0,"confidence":0,"technical":0,"communication":0,"feedback":"Your brief feedback here"}`;
+  } else {
+    prompt = `You are an expert interviewer evaluating a candidate's answer for the "${jobRoleTitle}" position.
 Difficulty level: ${difficulty}
 
 Question asked: "${questionText}"
@@ -67,6 +99,7 @@ STRICT SCORING RULES:
 
 Return ONLY a valid JSON object in this exact format:
 {"clarity":0,"confidence":0,"technical":0,"communication":0,"feedback":"Your brief feedback here"}`;
+  }
 
   // Use gpt-4o-mini for ultra-fast evaluation during the interview
   const response = await callOpenAI(prompt, true, false);
@@ -95,13 +128,27 @@ Return ONLY a valid JSON object in this exact format:
 /**
  * Generate the next adaptive question based on session history
  */
-async function generateNextQuestion(jobRoleTitle, difficulty, sessionHistory, avgScore) {
+async function generateNextQuestion(jobRoleTitle, difficulty, sessionHistory, avgScore, sessionType = 'interview') {
   const lastAnswers = sessionHistory
     .slice(-3)
-    .map((h, i) => `Q: ${h.question}\nA: ${h.answerSummary || '(no answer)'}`)
+    .map((h, i) => `${sessionType === 'conversation' ? 'You' : 'Q'}: ${h.question}\n${sessionType === 'conversation' ? 'User' : 'A'}: ${h.answerSummary || '(no answer)'}`)
     .join('\n\n');
 
-  const prompt = `You are an expert, highly conversational hiring manager conducting an adaptive mock interview for the "${jobRoleTitle}" position.
+  let prompt = '';
+  if (sessionType === 'conversation') {
+    prompt = `You are playing the role of ${jobRoleTitle} in an everyday, real-life casual scenario. You are in a warm, natural conversation with the user.
+
+Recent Q&A Dialogue:
+${lastAnswers}
+
+Generate your NEXT natural conversational response and question organically:
+- THE 3-LINE LAW: Keep it very punchy and conversational. Maximum 3 lines total.
+- ORGANIC FLOW: Read the user's last answer and reply to it naturally (e.g. acknowledge what they said, make a tiny friendly comment, then ask the next logical question).
+- NO ROBOTIC TEMPLATES: Do not repeat generic phrases like "I see," "Got it." Talk like a real person in that environment.
+
+Return ONLY the text you will speak. No numbering, no prefixes.`;
+  } else {
+    prompt = `You are an expert, highly conversational hiring manager conducting an adaptive mock interview for the "${jobRoleTitle}" position.
 Difficulty level: ${difficulty}
 Candidate's score: ${avgScore}/10
 
@@ -117,6 +164,7 @@ Generate the NEXT response and question organically:
 - AVOID REPETITION: Do not use the same transition phrases over and over. Avoid "I see," "Got it," "That's interesting." Just talk naturally.
 
 Return ONLY the text you will speak. No numbering, no prefixes.`;
+  }
 
   return await callOpenAI(prompt);
 }
@@ -124,15 +172,50 @@ Return ONLY the text you will speak. No numbering, no prefixes.`;
 /**
  * Generate the final interview report
  */
-async function generateFinalReport(jobRoleTitle, sessionSummary) {
+async function generateFinalReport(jobRoleTitle, sessionSummary, sessionType = 'interview') {
   const historyText = sessionSummary.history
     .map((h, i) => {
-      const scores = `Clarity:${h.clarity} Confidence:${h.confidence} Technical:${h.technical} Communication:${h.communication}`;
+      const scores = sessionType === 'conversation' 
+        ? `Clarity:${h.clarity} Confidence:${h.confidence} Grammar:${h.technical} Flow:${h.communication}`
+        : `Clarity:${h.clarity} Confidence:${h.confidence} Technical:${h.technical} Communication:${h.communication}`;
       return `Q${i + 1}: ${h.question}\nAnswer: ${h.answerSummary || '(skipped)'}\nScores: ${scores}`;
     })
     .join('\n\n');
 
-  const prompt = `You are an expert career coach reviewing a mock interview for the "${jobRoleTitle}" position.
+  let prompt = '';
+  if (sessionType === 'conversation') {
+    prompt = `You are a friendly speech and communication coach reviewing a casual scenario conversation with a "${jobRoleTitle}".
+
+Conversation Summary:
+- Turns completed: ${sessionSummary.answeredQuestions}/${sessionSummary.totalQuestions}
+- Average Clarity: ${sessionSummary.avgClarity}/10
+- Average Confidence: ${sessionSummary.avgConfidence}/10
+- Average Grammar & Vocabulary: ${sessionSummary.avgTechnical}/10
+- Average Flow & Engagement: ${sessionSummary.avgCommunication}/10
+- Overall Score: ${sessionSummary.overallScore}/10
+
+Detailed Conversation Log:
+${historyText}
+
+CRITICAL RULES FOR READINESS LEVEL:
+- If overall score < 3: MUST be "not_ready"
+- If overall score 3 to <6: MUST be "needs_improvement"
+- If overall score 6 to <8: MUST be "almost_ready"
+- If overall score 8 to <9.5: MUST be "ready"
+- If overall score >= 9.5: MUST be "excellent"
+
+Generate a comprehensive conversation report. Return ONLY a valid JSON object:
+{
+  "strengths": ["strength 1", "strength 2", "strength 3"],
+  "weaknesses": ["weakness 1", "weakness 2"],
+  "suggestions": ["suggestion 1", "suggestion 2", "suggestion 3"],
+  "behaviouralObservations": ["Grammar check", "Pronunciation / flow check", "Vocabulary selection details", "Conversational confidence cues"],
+  "summaryVerdict": "A decisive 1-sentence verdict on their conversation skill.",
+  "overallFeedback": "2-3 sentence summary of their communication performance",
+  "readinessLevel": "not_ready|needs_improvement|almost_ready|ready|excellent"
+}`;
+  } else {
+    prompt = `You are an expert career coach reviewing a mock interview for the "${jobRoleTitle}" position.
 
 Interview Summary:
 - Questions answered: ${sessionSummary.answeredQuestions}/${sessionSummary.totalQuestions}
@@ -162,6 +245,7 @@ Generate a comprehensive interview report. Return ONLY a valid JSON object:
   "overallFeedback": "2-3 sentence summary of the candidate's performance",
   "readinessLevel": "not_ready|needs_improvement|almost_ready|ready|excellent"
 } `;
+  }
 
   const response = await callOpenAI(prompt, true, true);
 

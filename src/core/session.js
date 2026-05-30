@@ -12,7 +12,7 @@ const SESSION_PREFIX = 'interview:session:';
 /**
  * Create a new interview session
  */
-async function createSession(userId, jobRoleId, jobRoleTitle, difficulty, maxQuestions) {
+async function createSession(userId, jobRoleId, jobRoleTitle, difficulty, maxQuestions, sessionType = 'interview') {
   const redis = getRedis();
   const sessionId = uuidv4();
   const sessionKey = `${SESSION_PREFIX}${sessionId}`;
@@ -24,6 +24,7 @@ async function createSession(userId, jobRoleId, jobRoleTitle, difficulty, maxQue
     jobRoleTitle,
     difficulty: difficulty || 'mid',
     maxQuestions: maxQuestions || env.MAX_QUESTIONS,
+    sessionType,
     currentQuestion: 0,
     state: 'idle',
     scores: [],
