@@ -7,6 +7,8 @@ const axios = require('axios');
 const env = require('../../config/env');
 const multer = require('multer');
 const logger = require('../../core/logger');
+const sessionManager = require('../../core/session');
+const { JOB_ROLES } = require('./interview.data');
 
 // Configure multer for memory storage (high-speed processing)
 const upload = multer({ 
@@ -77,6 +79,95 @@ const getHistory = async (req, res, next) => {
     res.json({ success: true, data });
   } catch (err) {
     next(err);
+  }
+};
+
+function currentUserId(req) {
+  return req.user?.id || req.user?.user_id || req.user?.userId || null;
+}
+
+function normalizeType(type) {
+  if (type === 'resume') return 'resume_upload';
+  if (type === 'technical') return 'technical';
+  if (type === 'role-based') return 'role_based';
+  return 'general';
+}
+
+function formatReport(session, result, requestBody) {
+  const report = result.report || {};
+  const toPercent = (value) => Math.round(Math.max(0, Math.min(10, Number(value) || 0)) * 10);
+  return {
+    sessionId: result.sessionId || session?.sessionId,
+    type: requestBody.type || 'general',
+    difficulty: requestBody.difficulty || 'medium',
+    duration: 10,
+    questionsAttempted: result.answeredQuestions || 0,
+    overallScore: toPercent(result.overallScore),
+    skills: [
+      { label: 'Communication', score: toPercent(result.avgCommunication) },
+      { label: 'Problem Solving', score: toPercent(result.avgTechnical) },
+      { label: 'Confidence', score: toPercent(result.avgConfidence) },
+      { label: 'Clarity', score: toPercent(result.avgClarity) },
+    ],
+    strengths: Array.isArray(report.strengths) ? report.strengths : [],
+    improvements: Array.isArray(report.suggestions) ? report.suggestions : (Array.isArray(report.weaknesses) ? report.weaknesses : []),
+    detailedReport: report,
+  };
+}
+
+/**
+ * HTTP bridge for the Next.js web client. The mobile app continues to use the
+ * WebSocket gateway; both paths share the same Redis session and GPT service.
+ */
+const handleInterviewSession = async (req, res, next) => {
+  try {
+    const action = req.body?.action || 'create';
+    const userId = currentUserId(req);
+    if (!userId) return res.status(401).json({ success: false, message: 'User ID is missing from the verified session.' });
+
+    if (action === 'create') {
+      const roleTitle = String(req.body?.role || 'Business Analyst').slice(0, 120);
+      const matchingRole = JOB_ROLES.find((role) => role.title?.toLowerCase() === roleTitle.toLowerCase());
+      const result = await interviewService.startSession(
+        userId,
+        matchingRole?.id || 1,
+        matchingRole?.title || roleTitle,
+        req.body?.difficulty || 'medium',
+        Math.max(3, Math.min(10, Number(req.body?.maxQuestions) || 5)),
+        normalizeType(req.body?.type)
+      );
+      return res.json({
+        success: true,
+        data: {
+          sessionId: result.sessionId,
+          type: req.body?.type || 'general',
+          role: matchingRole?.title || roleTitle,
+          difficulty: req.body?.difficulty || 'medium',
+          duration: 10,
+          totalQuestions: result.totalQuestions,
+          questions: [result.questionText],
+        },
+      });
+    }
+
+    const sessionId = req.body?.sessionId;
+    const session = await sessionManager.getSession(sessionId);
+    if (!session) return res.status(404).json({ success: false, message: 'Interview session has expired. Start a new interview.' });
+    if (String(session.userId) !== String(userId)) return res.status(403).json({ success: false, message: 'This interview belongs to another student.' });
+
+    if (action === 'answer') {
+      const result = await interviewService.processAnswer(sessionId, String(req.body?.answerText || '').trim(), null, null, true);
+      return res.json({ success: true, data: result });
+    }
+
+    if (action === 'complete') {
+      const result = await interviewService.completeInterview(sessionId);
+      return res.json({ success: true, data: formatReport(session, result, req.body) });
+    }
+
+    return res.status(400).json({ success: false, message: 'Unsupported interview action.' });
+  } catch (error) {
+    next(error);
   }
 };
 
@@ -174,4 +265,5 @@ module.exports = {
   getAssemblyToken,
   uploadAnswerAudio,
   upload,
+  handleInterviewSession,
 };

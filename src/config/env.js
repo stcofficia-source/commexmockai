@@ -19,6 +19,8 @@ const env = {
   // AI Models
   GEMINI_API_KEY: process.env.GEMINI_API_KEY || '',
   OPENAI_API_KEY: process.env.OPENAI_API_KEY || '',
+  OPENAI_MENTOR_MODEL: process.env.OPENAI_MENTOR_MODEL || 'gpt-4o-mini',
+  OPENAI_MENTOR_MAX_OUTPUT_TOKENS: parseInt(process.env.OPENAI_MENTOR_MAX_OUTPUT_TOKENS || '700', 10),
 
   // AssemblyAI
   ASSEMBLYAI_API_KEY: process.env.ASSEMBLYAI_API_KEY || '',
@@ -27,6 +29,7 @@ const env = {
 
   // STC API
   STC_API_BASE_URL: process.env.STC_API_BASE_URL || 'http://192.168.29.244:8000',
+  STC_ASSESSMENT_API_PREFIX: process.env.STC_ASSESSMENT_API_PREFIX || '/v1/psychometric-assessments',
 
   // Session
   SESSION_TTL: parseInt(process.env.SESSION_TTL_SECONDS || '3600', 10),

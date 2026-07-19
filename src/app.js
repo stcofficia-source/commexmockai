@@ -56,6 +56,15 @@ const { authenticate } = require('./core/middleware/auth');
 // Mock Interview Module Routes (Protected)
 app.use('/api/mock', authenticate, require('./modules/interview/interview.routes'));
 
+// Dashboard Module Routes (Protected)
+app.use('/api/dashboard', authenticate, require('./modules/dashboard/dashboard.routes'));
+
+// AI Mentor routes use the same verified STC session and keep OpenAI server-only.
+app.use('/api/mentor', authenticate, require('./modules/mentor/mentor.routes'));
+
+// STC/PHP owns assessment data and reports; this service is the authenticated adapter.
+app.use('/api/assessments', authenticate, require('./modules/assessments/physical-assessment.routes'));
+
 // API version info
 app.get('/api/info', (req, res) => {
   res.json({

@@ -8,6 +8,7 @@ const validate = require('../../core/middleware/validate');
 const { getRolesSchema, getHistorySchema, uploadAudioSchema } = require('./interview.validation');
 
 router.get('/departments', controller.getDepartments);
+router.post('/interviews', controller.handleInterviewSession);
 router.get('/stt/token', controller.getAssemblyToken);
 router.get('/departments/:id/roles', validate(getRolesSchema), controller.getRolesByDepartment);
 router.get('/roles/:id', controller.getRoleDetail);
