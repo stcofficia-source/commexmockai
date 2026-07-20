@@ -11,13 +11,33 @@ jobs:
     runs-on: ubuntu-latest
 
     steps:
+      - name: Check SSH port reachability
+        env:
+          DEPLOY_HOST: ${{ secrets.VPS_IP }}
+          DEPLOY_PORT: ${{ secrets.VPS_PORT }}
+        run: |
+          if [ -z "${DEPLOY_HOST}" ]; then
+            echo "::error::VPS_IP secret is empty. Add the server IP/domain in GitHub repository secrets."
+            exit 1
+          fi
+
+          DEPLOY_PORT="${DEPLOY_PORT:-22}"
+          echo "Checking SSH port reachability..."
+          timeout 20 bash -c "</dev/tcp/${DEPLOY_HOST}/${DEPLOY_PORT}" || {
+            echo "::error::Cannot reach the VPS SSH port from GitHub Actions. Check VPS_IP, VPS_PORT, sshd status, server firewall, cloud security group, and GitHub Actions IP access."
+            exit 1
+          }
+
       - name: Deploy via SSH
         uses: appleboy/ssh-action@v1.0.0
         with:
           host: ${{ secrets.VPS_IP }}
           username: ${{ secrets.VPS_USER }}
           key: ${{ secrets.VPS_SSH_KEY }}
-          port: ${{ secrets.VPS_PORT }}
+          port: ${{ secrets.VPS_PORT || '22' }}
+          timeout: 60s
+          command_timeout: 15m
+          script_stop: true
           script: |
             cd /var/www/commexmockai
             git pull origin main

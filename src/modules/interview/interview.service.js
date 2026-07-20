@@ -93,18 +93,19 @@ class InterviewService {
   /**
    * Start a new interview session
    */
-  async startSession(userId, jobRoleId, jobRoleTitle, difficulty, maxQuestions, sessionType = 'interview') {
+  async startSession(userId, jobRoleId, jobRoleTitle, difficulty, maxQuestions, sessionType = 'interview', interviewContext = {}) {
     const session = await sessionManager.createSession(
       userId,
       jobRoleId,
       jobRoleTitle,
       difficulty,
       maxQuestions,
-      sessionType
+      sessionType,
+      interviewContext
     );
 
     // Generate first question
-    const questionText = await openaiService.generateFirstQuestion(jobRoleTitle, difficulty, sessionType);
+    const questionText = await openaiService.generateFirstQuestion(jobRoleTitle, difficulty, sessionType, interviewContext);
 
     // Generate TTS URL (optional — client can use on-device TTS)
     let audioUrl = '';
@@ -185,7 +186,8 @@ class InterviewService {
       session.currentQuestionText,
       transcript,
       session.difficulty,
-      session.sessionType
+      session.sessionType,
+      session.interviewContext
     );
 
     // Generate NEXT QUESTION immediately using faster mini model
@@ -196,7 +198,8 @@ class InterviewService {
           session.difficulty,
           [...session.history, { question: session.currentQuestionText, answerSummary: tempAnswerSummary }],
           sessionManager.getSessionSummary(session).overallScore,
-          session.sessionType
+          session.sessionType,
+          session.interviewContext
         );
 
     // [SPEED UP] Emit partial result with next question text immediately if callback provided
