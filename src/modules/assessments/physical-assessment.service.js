@@ -50,12 +50,12 @@ async function request(config) {
   }
 }
 
-function catalog(token) { return request({ method: 'get', url: url(), headers: headers(token) }); }
-function history(token) { return request({ method: 'get', url: url('/attempts'), headers: headers(token) }); }
+function catalog(token) { return request({ method: 'get', url: url('/catalog'), headers: headers(token) }); }
+function history(token) { return request({ method: 'get', url: url('/history'), headers: headers(token) }); }
 function report(attemptId, token) { return request({ method: 'get', url: url(`/attempts/${attemptId}/report`), headers: headers(token) }); }
 
 async function start(payload, token) {
-  const result = await request({ method: 'post', url: url('/attempts'), data: payload, headers: headers(token) });
+  const result = await request({ method: 'post', url: url('/start'), data: payload, headers: headers(token) });
   const data = result?.attempt ? result : (result?.id ? { attempt: result, questions: result?.questions || [] } : result);
 
   if (!data?.questions || !data.questions.length) {
