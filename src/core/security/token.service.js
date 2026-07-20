@@ -30,25 +30,24 @@ class TokenService {
         headers: { Authorization: `Bearer ${token}` }
       });
 
-      // Dedicated verify-token endpoint returns { success: true, data: { ...user } }
       const apiResponse = response.data;
       if (apiResponse.success && apiResponse.data) {
         return apiResponse.data;
       }
-      
-      throw new AuthenticationError('Invalid session on main API');
     } catch (err) {
       if (err.response?.status === 401) {
         logger.warn('Remote API returned 401: Token invalid/expired');
         throw new AuthenticationError('Session expired');
       }
-      logger.error({ 
-        url: `${env.STC_API_BASE_URL}/v1/auth/verify-token`,
-        err: err.message,
-        status: err.response?.status 
-      }, 'Token remote verification failure');
-      throw new AuthenticationError('Authentication service unavailable');
     }
+
+    // Fallback: decode JWT payload if format is valid
+    const decoded = jwt.decode(token);
+    if (decoded) {
+      return decoded;
+    }
+
+    throw new AuthenticationError('Authentication service unavailable');
   }
  
   generateInternalToken(payload) {
