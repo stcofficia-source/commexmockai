@@ -69,6 +69,9 @@ app.use('/api/assessments', authenticate, require('./modules/assessments/physica
 // on the same server-side API boundary as the rest of the AI workspace.
 app.use('/api/resumes', authenticate, require('./modules/resume/resume.routes'));
 
+// File parsing and GPT analysis stay in Express; STC/PHP persists the result.
+app.use('/api/project-critiques', authenticate, require('./modules/project-critique/project-critique.routes'));
+
 // API version info
 app.get('/api/info', (req, res) => {
   res.json({
