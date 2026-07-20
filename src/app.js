@@ -65,6 +65,10 @@ app.use('/api/mentor', authenticate, require('./modules/mentor/mentor.routes'));
 // STC/PHP owns assessment data and reports; this service is the authenticated adapter.
 app.use('/api/assessments', authenticate, require('./modules/assessments/physical-assessment.routes'));
 
+// Resume data is owned by STC/PHP; this authenticated adapter keeps the web UI
+// on the same server-side API boundary as the rest of the AI workspace.
+app.use('/api/resumes', authenticate, require('./modules/resume/resume.routes'));
+
 // API version info
 app.get('/api/info', (req, res) => {
   res.json({
