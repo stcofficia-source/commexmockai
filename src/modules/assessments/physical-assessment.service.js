@@ -53,7 +53,31 @@ async function request(config) {
 function catalog(token) { return request({ method: 'get', url: url(), headers: headers(token) }); }
 function history(token) { return request({ method: 'get', url: url('/attempts'), headers: headers(token) }); }
 function report(attemptId, token) { return request({ method: 'get', url: url(`/attempts/${attemptId}/report`), headers: headers(token) }); }
-function start(payload, token) { return request({ method: 'post', url: url('/attempts'), data: payload, headers: headers(token) }); }
+
+async function start(payload, token) {
+  const result = await request({ method: 'post', url: url('/attempts'), data: payload, headers: headers(token) });
+  const data = result?.attempt ? result : (result?.id ? { attempt: result, questions: result?.questions || [] } : result);
+
+  if (!data?.questions || !data.questions.length) {
+    try {
+      const catData = await catalog(token);
+      const targetLevelId = Number(payload?.levelId || payload?.level_id || 1);
+      const list = Array.isArray(catData) ? catData : catData?.categories || catData?.data || [];
+      for (const cat of list) {
+        const levels = cat.levels || [];
+        const lvl = levels.find((l) => Number(l.id) === targetLevelId || Number(l.level_number) === targetLevelId);
+        if (lvl && lvl.questions && lvl.questions.length) {
+          data.questions = lvl.questions;
+          break;
+        }
+      }
+    } catch (err) {
+      console.warn('Failed to attach fallback questions in stcmockai:', err.message);
+    }
+  }
+
+  return data;
+}
 function answer(attemptId, questionId, payload, token) { return request({ method: 'put', url: url(`/attempts/${attemptId}/answers/${questionId}`), data: payload, headers: headers(token) }); }
 function complete(attemptId, payload, token) { return request({ method: 'post', url: url(`/attempts/${attemptId}/complete`), data: payload, headers: headers(token) }); }
 
