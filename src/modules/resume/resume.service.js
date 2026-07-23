@@ -2,6 +2,7 @@ const axios = require('axios');
 const env = require('../../config/env');
 const { extractText } = require('../documents/document-parser.service');
 const { analyzeResume } = require('../analysis/analysis.service');
+const { reserveAiCredits } = require('../../core/credit-billing.service');
 
 const phpBaseUrl = String(env.STC_API_BASE_URL || '').replace(/\/+$/, '');
 
@@ -31,6 +32,7 @@ async function request(method, path, authHeader, data) {
 async function analyzeUpload(userId, authHeader, file) {
   if (!userId) throw Object.assign(new Error('Authentication is required to analyze a resume.'), { statusCode: 401, isOperational: true });
   const parsed = await extractText(file, 'resume');
+  await reserveAiCredits({ authorization: authHeader, serviceKey: 'resume_ai', metadata: { feature: 'resume_analysis' } });
   const analysis = await analyzeResume({ title: file.originalname, extractedText: parsed.text });
   return {
     resume: {},
@@ -42,6 +44,8 @@ async function analyzeUpload(userId, authHeader, file) {
 
 async function reviewAts(userId, authHeader, payload = {}) {
   if (!userId) throw Object.assign(new Error('Authentication is required to review a resume.'), { statusCode: 401, isOperational: true });
+  if (!String(payload.title || '').trim() && !Object.keys(payload.form || {}).length) throw Object.assign(new Error('Add resume details before requesting an ATS review.'), { statusCode: 400, isOperational: true });
+  await reserveAiCredits({ authorization: authHeader, serviceKey: 'resume_ai', metadata: { feature: 'ats_review' } });
   const analysis = await analyzeResume({ title: payload.title, form: payload.form });
   const resumeId = String(payload.resumeId || '').trim();
   if (resumeId) await request('put', `/v1/resumes/${encodeURIComponent(resumeId)}/ats-analysis`, authHeader, { analysis });

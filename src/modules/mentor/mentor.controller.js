@@ -1,4 +1,5 @@
 const mentorService = require('./mentor.service');
+const { reserveAiCredits } = require('../../core/credit-billing.service');
 
 async function chat(req, res, next) {
   try {
@@ -12,6 +13,11 @@ async function chat(req, res, next) {
     }
 
     const token = req.headers.authorization?.replace(/^Bearer\s+/i, '') || '';
+    await reserveAiCredits({
+      authorization: req.headers.authorization,
+      serviceKey: 'ai_mentor',
+      metadata: { feature: 'mentor_chat' },
+    });
     const data = await mentorService.reply({
       message,
       history: req.body?.history,
