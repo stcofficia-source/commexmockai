@@ -1,6 +1,6 @@
 {
   "name": "stcmockai",
-  "version": "1.0.0",
+  "version": "2.0.0",
   "description": "STC Mock AI Interview Backend — WebSocket + Gemini Flash + TTS/STT",
   "main": "src/server.js",
   "scripts": {

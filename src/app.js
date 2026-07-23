@@ -6,6 +6,7 @@ const cors = require('cors');
 const helmet = require('helmet');
 const env = require('./config/env');
 const logger = require('./core/logger');
+const { version } = require('../package.json');
 
 const app = express();
 
@@ -44,7 +45,7 @@ app.get('/health', (req, res) => {
   res.json({
     success: true,
     service: 'stcmockai',
-    version: '1.0.0',
+    version,
     uptime: process.uptime(),
     timestamp: new Date().toISOString(),
   });
@@ -78,7 +79,7 @@ app.get('/api/info', (req, res) => {
     success: true,
     data: {
       name: 'STC Mock AI Interview',
-      version: '1.0.0',
+      version,
       features: [
         'websocket_interview',
         'gemini_ai_evaluation',

@@ -14,7 +14,7 @@ let openai = null;
  */
 function initOpenAI() {
   if (!env.OPENAI_API_KEY) {
-    logger.warn('⚠️ OPENAI_API_KEY not set — AI features will use mock responses');
+    logger.warn('OPENAI_API_KEY is not configured. AI requests will be rejected until a provider is configured.');
     return;
   }
   openai = new OpenAI({
@@ -294,8 +294,7 @@ Generate a comprehensive interview report. Return ONLY a valid JSON object:
  */
 async function callOpenAI(prompt, jsonMode = false, highReasoning = false) {
   if (!openai) {
-    logger.debug('Using mock AI response (no API key)');
-    return getMockResponse(prompt);
+    throw new AIServiceError('AI provider is not configured. Configure STCMOCKAI before starting an interview.');
   }
 
   // Speed Optimization: use gpt-4o-mini for fast question generation, gpt-4o for deep evaluation
@@ -317,26 +316,6 @@ async function callOpenAI(prompt, jsonMode = false, highReasoning = false) {
     }, 'OpenAI API call failed');
     throw new AIServiceError('AI service temporarily unavailable');
   }
-}
-
-/**
- * Mock responses for development
- */
-function getMockResponse(prompt) {
-  if (prompt.includes('FIRST interview question')) {
-    return 'Tell me about yourself and your experience relevant to this role.';
-  }
-  if (prompt.includes('Evaluate the answer')) {
-    return JSON.stringify({
-      clarity: 7,
-      confidence: 6,
-      technical: 7,
-      communication: 6,
-      feedback: 'Good answer with clear structure.',
-    });
-  }
-  // Simplified for brevity
-  return 'GPT-4o simulated response';
 }
 
 /**

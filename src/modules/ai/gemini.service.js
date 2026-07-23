@@ -15,7 +15,7 @@ let model = null;
  */
 function initGemini() {
   if (!env.GEMINI_API_KEY) {
-    logger.warn('⚠️ GEMINI_API_KEY not set — AI features will use mock responses');
+    logger.warn('GEMINI_API_KEY is not configured. Gemini requests will be rejected until a provider is configured.');
     return;
   }
   genAI = new GoogleGenerativeAI(env.GEMINI_API_KEY);
@@ -189,12 +189,11 @@ Generate a comprehensive interview report. Return ONLY a valid JSON object (no m
 }
 
 /**
- * Call Gemini API with fallback to mock
+ * Call Gemini API
  */
 async function callGemini(prompt) {
   if (!model) {
-    logger.debug('Using mock AI response (no API key)');
-    return getMockResponse(prompt);
+    throw new AIServiceError('Gemini provider is not configured.');
   }
 
   try {
@@ -210,48 +209,6 @@ async function callGemini(prompt) {
     }, 'Gemini API call failed');
     throw new AIServiceError('AI service temporarily unavailable');
   }
-}
-
-/**
- * Mock responses for development without API key
- */
-function getMockResponse(prompt) {
-  if (prompt.includes('FIRST interview question')) {
-    return 'Tell me about yourself and your experience relevant to this role.';
-  }
-  if (prompt.includes('Evaluate the answer')) {
-    return JSON.stringify({
-      clarity: 7,
-      confidence: 6,
-      technical: 7,
-      communication: 6,
-      feedback: 'Good answer with clear structure. Consider adding more specific examples.',
-    });
-  }
-  if (prompt.includes('NEXT interview question')) {
-    const questions = [
-      'What is your greatest professional achievement and why?',
-      'Can you describe a challenging situation you faced at work and how you resolved it?',
-      'Where do you see yourself in five years?',
-      'What makes you uniquely qualified for this position?',
-      'How do you handle working under pressure or tight deadlines?',
-      'Tell me about a time you had to learn a new technology quickly.',
-      'How do you prioritize your tasks when you have multiple deadlines?',
-      'Describe your ideal work environment.',
-      'What questions do you have about this role?',
-    ];
-    return questions[Math.floor(Math.random() * questions.length)];
-  }
-  if (prompt.includes('comprehensive interview report')) {
-    return JSON.stringify({
-      strengths: ['Clear communication', 'Good technical knowledge', 'Professional demeanor'],
-      weaknesses: ['Could provide more specific examples', 'Room for deeper technical answers'],
-      suggestions: ['Practice STAR method for behavioral questions', 'Research the company more', 'Prepare specific project examples'],
-      overallFeedback: 'Solid interview performance. The candidate shows good potential with room for improvement in providing specific examples.',
-      readinessLevel: 'almost_ready',
-    });
-  }
-  return 'Mock AI response';
 }
 
 /**
