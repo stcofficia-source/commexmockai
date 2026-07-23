@@ -93,7 +93,7 @@ class InterviewService {
   /**
    * Start a new interview session
    */
-  async startSession(userId, jobRoleId, jobRoleTitle, difficulty, maxQuestions, sessionType = 'interview', interviewContext = {}) {
+  async startSession(userId, jobRoleId, jobRoleTitle, difficulty, maxQuestions, sessionType = 'interview', interviewContext = {}, authorization = '') {
     const session = await sessionManager.createSession(
       userId,
       jobRoleId,
@@ -103,6 +103,15 @@ class InterviewService {
       sessionType,
       interviewContext
     );
+
+    // Persist and debit before making an AI request. STCAPI reads the active rate card
+    // and rejects sessions whose wallet cannot cover the configured service rate.
+    try {
+      await this.persistInterviewStart(userId, jobRoleId, session.sessionId, maxQuestions, authorization);
+    } catch (err) {
+      await sessionManager.deleteSession(session.sessionId);
+      throw err;
+    }
 
     // Generate first question
     const questionText = await openaiService.generateFirstQuestion(jobRoleTitle, difficulty, sessionType, interviewContext);
@@ -120,9 +129,6 @@ class InterviewService {
       state: 'asking',
       currentQuestionText: questionText,
     });
-
-    // Persist interview start to PHP API (best-effort, but do it BEFORE first answer to avoid "Interview not found")
-    await this.persistInterviewStart(userId, jobRoleId, session.sessionId, maxQuestions);
 
     return {
       sessionId: session.sessionId,
@@ -310,12 +316,12 @@ class InterviewService {
   /**
    * Persist interview start to PHP API
    */
-  async persistInterviewStart(userId, jobRoleId, sessionId, maxQuestions) {
+  async persistInterviewStart(userId, jobRoleId, sessionId, maxQuestions, authorization = '') {
     try {
       const resp = await axiosRequestPreserveMethodOnRedirect({
         method: 'post',
         url: `${env.STC_API_BASE_URL}/v1/mock/interviews`,
-        headers: { 'content-type': 'application/json' },
+        headers: { 'content-type': 'application/json', ...(authorization ? { authorization } : {}) },
         timeout: 8000,
         data: {
         user_id: userId,
@@ -330,7 +336,7 @@ class InterviewService {
       return createdId || null;
     } catch (err) {
       logger.error({ err: summarizeAxiosError(err), sessionId }, 'PHP API: persistInterviewStart failed');
-      return null;
+      throw err;
     }
   }
 

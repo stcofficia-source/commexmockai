@@ -122,13 +122,10 @@ function normalizeType(type) {
 }
 
 function normalizeDuration(value) {
-  const duration = Number(value);
-  return [30, 45, 60].includes(duration) ? duration : 30;
+  return 10;
 }
 
 function questionsForDuration(duration) {
-  if (duration >= 60) return 20;
-  if (duration >= 45) return 15;
   return 10;
 }
 
@@ -322,6 +319,7 @@ const handleInterviewSession = async (req, res, next) => {
         maxQuestions,
         sessionType,
         interview.context,
+        req.headers.authorization || "",
       );
       return res.json({
         success: true,
