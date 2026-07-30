@@ -31,7 +31,8 @@ async function bootstrap() {
 ║   🎤 STC Mock AI Interview Server             ║
 ║   Port: ${env.PORT}                                ║
 ║   Env:  ${env.NODE_ENV.padEnd(20)}              ║
-║   WS:   ws://localhost:${env.PORT}/ws/interview     ║
+║   Mobile WS: ws://localhost:${env.PORT}/ws/interview ║
+║   Web WS: ws://localhost:${env.PORT}/ws/web-interview║
 ╚═══════════════════════════════════════════════╝
       `);
     });

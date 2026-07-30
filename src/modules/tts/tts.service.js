@@ -1,7 +1,6 @@
 /**
  * Text-to-Speech Service
- * Upgraded: Uses OpenAI Neural TTS (tts-1) for ultra-human, professional voices.
- * Replaces the robotic Google Translate fallback with state-of-the-art AI speech.
+ * Uses a configurable OpenAI TTS interviewer voice.
  */
 const OpenAI = require('openai');
 const fs = require('fs');

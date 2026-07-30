@@ -58,4 +58,20 @@ async function reviewAts(req, res, next) {
   } catch (error) { next(error); }
 }
 
-module.exports = { getWorkspace, list, create, update, remove, completeTour, analyzeUpload, reviewAts };
+function getAtsReviewExperience(req, res, next) {
+  try {
+    res.json({ success: true, data: resumeService.getAtsReviewExperience() });
+  } catch (error) { next(error); }
+}
+
+module.exports = {
+  getWorkspace,
+  list,
+  create,
+  update,
+  remove,
+  completeTour,
+  analyzeUpload,
+  reviewAts,
+  getAtsReviewExperience,
+};

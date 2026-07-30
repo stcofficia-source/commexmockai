@@ -2,9 +2,10 @@ const axios = require('axios');
 const env = require('../../config/env');
 const { ValidationError } = require('../../core/errors');
 const { extractText } = require('../documents/document-parser.service');
+const { scanProjectFiles } = require('../documents/document-security.service');
 const { storeProjectFile } = require('../documents/document-storage.service');
 const { analyzeProject } = require('../analysis/analysis.service');
-const { reserveAiCredits } = require('../../core/credit-billing.service');
+const { runBillableAiOperation } = require('../../core/credit-billing.service');
 
 const phpBaseUrl = String(env.STC_API_BASE_URL || '').replace(/\/+$/, '');
 
@@ -32,14 +33,51 @@ async function analyze({ studentId, authHeader, payload, files }) {
   if (!title) throw new ValidationError('Project title is required.');
   if (!focus.length) throw new ValidationError('Select at least one feedback area.');
   if (!files.length) throw new ValidationError('Upload at least one project file.');
-  const parsedFiles = await Promise.all(files.map(async (file) => {
+  const securityChecks = await scanProjectFiles(files);
+  const parsedFiles = await Promise.all(files.map(async (file, index) => {
     const parsed = await extractText(file, 'project');
     const stored = await storeProjectFile(studentId, file);
-    return { name: file.originalname, mimeType: file.mimetype, size: file.size, extension: parsed.extension, text: parsed.text, storagePath: stored.storagePath };
+    return {
+      ...securityChecks[index],
+      name: file.originalname,
+      mimeType: securityChecks[index]?.mimeType || file.mimetype,
+      size: file.size,
+      extension: parsed.extension,
+      extractedCharacters: parsed.text.length,
+      text: parsed.text,
+      storagePath: stored.storagePath,
+    };
   }));
-  await reserveAiCredits({ authorization: authHeader, serviceKey: 'project_critique', metadata: { feature: 'project_critique' } });
-  const analysis = await analyzeProject({ title, submissionType: payload.submissionType, technologies: payload.technologies, description: payload.description, focus, files: parsedFiles });
-  return persist(authHeader, { title, submissionType: payload.submissionType || '', technologies: payload.technologies || '', description: payload.description || '', focus, files: parsedFiles.map(({ text, ...file }) => file), analysis });
+  const billed = await runBillableAiOperation({
+    authorization: authHeader,
+    serviceKey: 'project_critique',
+    operation: () => analyzeProject({
+      title,
+      submissionType: payload.submissionType,
+      technologies: payload.technologies,
+      description: payload.description,
+      focus,
+      files: parsedFiles,
+    }),
+  });
+  const analysis = billed.data;
+  return persist(authHeader, {
+    title,
+    submissionType: payload.submissionType || '',
+    technologies: payload.technologies || '',
+    description: payload.description || '',
+    focus,
+    files: parsedFiles.map(({ text, ...file }) => file),
+    analysis: {
+      ...analysis,
+      security: {
+        status: 'passed',
+        scannedFiles: securityChecks.length,
+        engines: Array.from(new Set(securityChecks.map((item) => item.scanEngine))),
+        scannedAt: securityChecks[securityChecks.length - 1]?.scannedAt || new Date().toISOString(),
+      },
+    },
+  });
 }
 
 module.exports = { analyze };

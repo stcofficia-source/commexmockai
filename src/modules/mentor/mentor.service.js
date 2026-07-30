@@ -2,6 +2,7 @@ const OpenAI = require('openai');
 const axios = require('axios');
 const env = require('../../config/env');
 const logger = require('../../core/logger');
+const { captureOpenAiUsage } = require('../../core/ai-usage-cost.service');
 
 const MAX_HISTORY = 8;
 const MAX_COURSE_RECOMMENDATIONS = 5;
@@ -212,6 +213,7 @@ async function reply({ message, history, token }) {
       { role: 'user', content: `LMS_CONTEXT:\n${JSON.stringify(context)}\n\nSTUDENT_QUESTION:\n${message}` },
     ],
   });
+  captureOpenAiUsage(completion, env.OPENAI_MENTOR_MODEL);
 
   let output;
   try {

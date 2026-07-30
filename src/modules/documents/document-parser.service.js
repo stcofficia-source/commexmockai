@@ -1,14 +1,29 @@
 const AdmZip = require('adm-zip');
+const CFB = require('cfb');
 const mammoth = require('mammoth');
 const pdfParse = require('pdf-parse');
-const { fromBuffer } = require('file-type');
+const WordExtractor = require('word-extractor');
 const { ValidationError } = require('../../core/errors');
 
-const TEXT_LIMIT = 30000;
+const TEXT_LIMIT = 60000;
 const ALLOWED_BY_KIND = {
   resume: new Set(['pdf', 'doc', 'docx', 'txt']),
-  project: new Set(['pdf', 'doc', 'docx', 'ppt', 'pptx']),
+  project: new Set([
+    'pdf', 'doc', 'docx', 'ppt', 'pptx', 'zip',
+    'txt', 'md', 'markdown', 'csv', 'json', 'xml', 'yaml', 'yml', 'rtf',
+    'js', 'jsx', 'mjs', 'cjs', 'ts', 'tsx', 'php', 'py', 'java', 'c', 'cc', 'cpp',
+    'h', 'hpp', 'cs', 'go', 'rs', 'rb', 'swift', 'kt', 'kts', 'sql', 'sh', 'bash',
+    'zsh', 'html', 'htm', 'css', 'scss', 'sass', 'less', 'vue', 'svelte', 'dart',
+    'gradle', 'properties', 'toml', 'ini', 'env', 'gitignore', 'dockerfile',
+  ]),
 };
+let fileTypeModulePromise;
+
+async function detectFileType(buffer) {
+  fileTypeModulePromise ||= import('file-type');
+  const { fileTypeFromBuffer } = await fileTypeModulePromise;
+  return fileTypeFromBuffer(buffer);
+}
 
 function extensionOf(name) {
   return String(name || '').split('.').pop().toLowerCase();
@@ -29,24 +44,66 @@ function xmlText(value) {
 }
 
 async function validate(file, kind) {
-  const extension = extensionOf(file?.originalname);
+  const base = String(file?.originalname || '').split(/[\\/]/).pop().toLowerCase();
+  const extension = base === 'dockerfile' ? 'dockerfile' : base === '.env' ? 'env' : base === '.gitignore' ? 'gitignore' : extensionOf(file?.originalname);
   if (!file?.buffer?.length || !ALLOWED_BY_KIND[kind]?.has(extension)) {
     throw new ValidationError(`Upload a supported ${kind} file.`);
   }
-  const detected = await fromBuffer(file.buffer).catch(() => undefined);
+  const detected = await detectFileType(file.buffer).catch(() => undefined);
   const detectedExtension = detected?.ext;
   if (detectedExtension && extension !== detectedExtension && !(extension === 'docx' && detectedExtension === 'zip') && !(extension === 'pptx' && detectedExtension === 'zip')) {
     throw new ValidationError('The file contents do not match its extension.');
   }
-  if (['doc', 'ppt'].includes(extension)) {
-    throw new ValidationError(`Legacy .${extension} files need conversion. Upload the modern ${extension === 'doc' ? '.docx' : '.pptx'} version instead.`);
-  }
   return extension;
+}
+
+function archiveText(buffer) {
+  const archive = new AdmZip(buffer);
+  const entries = archive.getEntries()
+    .filter((entry) => !entry.isDirectory)
+    .filter((entry) => !/(^|\/)(node_modules|vendor|dist|build|coverage|\.git)(\/|$)/i.test(entry.entryName))
+    .filter((entry) => !/\.(png|jpe?g|gif|webp|ico|pdf|docx?|pptx?|xlsx?|exe|dll|so|dylib|class|jar|woff2?|ttf|otf)$/i.test(entry.entryName))
+    .slice(0, 180);
+  let remaining = TEXT_LIMIT;
+  const blocks = [];
+  for (const entry of entries) {
+    if (remaining <= 0) break;
+    const content = entry.getData().toString('utf8').replace(/\u0000/g, '');
+    if (!content.trim()) continue;
+    const block = `FILE: ${entry.entryName}\n${content.slice(0, Math.min(12000, remaining))}`;
+    blocks.push(block);
+    remaining -= block.length;
+  }
+  return text(blocks.join('\n\n'));
+}
+
+function legacyPowerPointText(buffer) {
+  const container = CFB.read(buffer, { type: 'buffer' });
+  const stream = container.FileIndex?.find((entry) => /\/powerpoint document$/i.test(entry.name || entry.FullPath || ''))
+    || container.FileIndex?.find((entry) => /powerpoint document/i.test(entry.name || ''));
+  if (!stream?.content?.length) throw new ValidationError('The PowerPoint document does not contain a readable slide stream.');
+  const source = Buffer.from(stream.content);
+  const values = [];
+  for (let offset = 0; offset + 8 <= source.length; offset += 1) {
+    const recordType = source.readUInt16LE(offset + 2);
+    const length = source.readUInt32LE(offset + 4);
+    if (![4000, 4008].includes(recordType) || !length || length > 1024 * 1024 || offset + 8 + length > source.length) continue;
+    const body = source.subarray(offset + 8, offset + 8 + length);
+    const value = recordType === 4000 ? body.toString('utf16le') : body.toString('latin1');
+    const cleaned = value.replace(/[\u0000-\u0008\u000b\u000c\u000e-\u001f]/g, ' ').replace(/\s+/g, ' ').trim();
+    if (cleaned.length > 1) values.push(cleaned);
+    offset += 7 + length;
+  }
+  const unique = Array.from(new Set(values));
+  if (!unique.length) throw new ValidationError('No readable text was found in the PowerPoint document.');
+  return text(unique.join('\n'));
 }
 
 async function extractText(file, kind) {
   const extension = await validate(file, kind);
-  if (extension === 'txt') return { extension, text: text(file.buffer.toString('utf8')) };
+  if (!['pdf', 'doc', 'docx', 'ppt', 'pptx', 'zip'].includes(extension)) {
+    return { extension, text: text(file.buffer.toString('utf8').replace(/\u0000/g, '')) };
+  }
   if (extension === 'pdf') {
     const parsed = await pdfParse(file.buffer);
     return { extension, text: text(parsed.text) };
@@ -54,6 +111,10 @@ async function extractText(file, kind) {
   if (extension === 'docx') {
     const parsed = await mammoth.extractRawText({ buffer: file.buffer });
     return { extension, text: text(parsed.value) };
+  }
+  if (extension === 'doc') {
+    const extracted = await new WordExtractor().extract(file.buffer);
+    return { extension, text: text([extracted.getHeaders(), extracted.getBody(), extracted.getFootnotes(), extracted.getEndnotes()].filter(Boolean).join('\n')) };
   }
   if (extension === 'pptx') {
     const archive = new AdmZip(file.buffer);
@@ -64,6 +125,8 @@ async function extractText(file, kind) {
       .filter(Boolean);
     return { extension, text: text(slides.join('\n')) };
   }
+  if (extension === 'ppt') return { extension, text: legacyPowerPointText(file.buffer) };
+  if (extension === 'zip') return { extension, text: archiveText(file.buffer) };
   throw new ValidationError('This file format is not supported.');
 }
 

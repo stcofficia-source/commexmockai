@@ -13,6 +13,7 @@ const INTERVIEW_STATES = {
 const WS_EVENTS = {
   // Client → Server
   SESSION_START: 'session:start',
+  SESSION_ATTACH: 'session:attach',
   ANSWER_AUDIO: 'answer:audio_chunk',
   ANSWER_TEXT: 'answer:text',
   SILENCE_DETECTED: 'answer:silence_detected',

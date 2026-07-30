@@ -6,6 +6,7 @@ const OpenAI = require('openai');
 const env = require('../../config/env');
 const logger = require('../../core/logger');
 const { AIServiceError } = require('../../core/errors');
+const { captureOpenAiUsage } = require('../../core/ai-usage-cost.service');
 
 let openai = null;
 
@@ -29,6 +30,7 @@ function initOpenAI() {
 function interviewContextBrief(interviewContext = {}) {
   const context = interviewContext && typeof interviewContext === 'object' ? interviewContext : {};
   const lines = [];
+  if (context.candidateName) lines.push(`Candidate first name: ${String(context.candidateName).split(/\s+/)[0].slice(0, 60)}`);
   if (context.departmentName) lines.push(`Department: ${String(context.departmentName).slice(0, 100)}`);
   if (context.roleTitle) lines.push(`Target role: ${String(context.roleTitle).slice(0, 120)}`);
   if (context.experienceLevel) lines.push(`Experience level: ${String(context.experienceLevel).slice(0, 30)}`);
@@ -55,6 +57,10 @@ Rules:
   }
 
   const context = interviewContextBrief(interviewContext);
+  const candidateName = String(interviewContext?.candidateName || '').trim().split(/\s+/)[0];
+  const greetingInstruction = candidateName
+    ? `Address ${candidateName} naturally and personally. The API will apply the exact opening greeting, so do not add another hello or time-of-day greeting yourself.`
+    : 'Start with a short friendly greeting, then continue directly with the question.';
   const openingInstruction = sessionType === 'technical'
     ? 'Ask one concrete technical, coding, debugging, architecture, or logic question that is appropriate for the target role and the stated experience level. Do not start with a generic introduction question.'
     : sessionType === 'resume_upload'
@@ -68,6 +74,7 @@ ${context}
 
 Task: Generate the FIRST interview question. 
 MANDATORY: ${openingInstruction}
+MANDATORY: ${greetingInstruction}
 
 Rules:
 - THE 3-LINE LAW: The question MUST BE 1 to 3 lines max. NEVER exceed this. 
@@ -198,7 +205,7 @@ Return ONLY the text you will speak. No numbering, no prefixes.`;
 /**
  * Generate the final interview report
  */
-async function generateFinalReport(jobRoleTitle, sessionSummary, sessionType = 'interview') {
+async function generateFinalReport(jobRoleTitle, sessionSummary, sessionType = 'interview', { fast = false } = {}) {
   const historyText = sessionSummary.history
     .map((h, i) => {
       const scores = sessionType === 'conversation' 
@@ -273,7 +280,9 @@ Generate a comprehensive interview report. Return ONLY a valid JSON object:
 } `;
   }
 
-  const response = await callOpenAI(prompt, true, true);
+  // Browser sessions use the mini model for a responsive end-interview flow;
+  // mobile retains its existing full-report model unless it opts in.
+  const response = await callOpenAI(prompt, true, !fast);
 
   try {
     return typeof response === 'string' ? JSON.parse(response) : response;
@@ -307,6 +316,7 @@ async function callOpenAI(prompt, jsonMode = false, highReasoning = false) {
       response_format: jsonMode ? { type: 'json_object' } : { type: 'text' },
       temperature: 0.7,
     });
+    captureOpenAiUsage(response, modelId);
 
     return response.choices[0].message.content;
   } catch (err) {
@@ -408,6 +418,7 @@ async function analyzeResume(resumeFile) {
       }],
       max_output_tokens: Math.min(Math.max(env.OPENAI_MENTOR_MAX_OUTPUT_TOKENS, 400), 1000),
     });
+    captureOpenAiUsage(response, env.OPENAI_MENTOR_MODEL);
 
     return parseResumeProfile(response.output_text);
   } catch (error) {

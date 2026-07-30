@@ -1,5 +1,5 @@
 const mentorService = require('./mentor.service');
-const { reserveAiCredits } = require('../../core/credit-billing.service');
+const { runBillableAiOperation } = require('../../core/credit-billing.service');
 
 async function chat(req, res, next) {
   try {
@@ -13,19 +13,18 @@ async function chat(req, res, next) {
     }
 
     const token = req.headers.authorization?.replace(/^Bearer\s+/i, '') || '';
-    await reserveAiCredits({
+    const billed = await runBillableAiOperation({
       authorization: req.headers.authorization,
       serviceKey: 'ai_mentor',
-      metadata: { feature: 'mentor_chat' },
-    });
-    const data = await mentorService.reply({
-      message,
-      history: req.body?.history,
-      user: req.user,
-      token,
+      operation: () => mentorService.reply({
+        message,
+        history: req.body?.history,
+        user: req.user,
+        token,
+      }),
     });
 
-    res.json({ success: true, data });
+    res.json({ success: true, data: billed.data });
   } catch (error) {
     next(error);
   }

@@ -10,6 +10,7 @@ const logger = require("../../core/logger");
 const sessionManager = require("../../core/session");
 const { DEPARTMENTS, JOB_ROLES } = require("./interview.data");
 const openaiService = require("../ai/openai.service");
+const { runBillableAiOperation } = require("../../core/credit-billing.service");
 
 // Configure multer for memory storage (high-speed processing)
 const upload = multer({
@@ -199,7 +200,12 @@ const analyzeResume = (req, res, next) => {
       if (!req.file) {
         return res.status(400).json({ success: false, message: "Upload a PDF, DOC, or DOCX resume up to 5 MB." });
       }
-      const profile = await openaiService.analyzeResume(req.file);
+      const billed = await runBillableAiOperation({
+        authorization: req.headers.authorization || "",
+        serviceKey: "mock_interview",
+        operation: () => openaiService.analyzeResume(req.file),
+      });
+      const profile = billed.data;
       return res.json({ success: true, data: resolveResumeProfile(profile) });
     } catch (error) {
       return next(error);
@@ -253,6 +259,7 @@ function resolveInterviewContext(body, sessionType) {
       education: safeList(body?.education, 8, 140),
       focus: safeList(body?.focus, 6, 80),
       resumeName: safeText(body?.resume?.name, 180),
+      candidateName: safeText(body?.candidateName, 80),
     },
   };
 }
@@ -266,6 +273,8 @@ function formatReport(session, result, requestBody) {
     type: requestBody.type || "general",
     difficulty: requestBody.difficulty || "medium",
     duration: normalizeDuration(requestBody.duration),
+    durationSeconds: Number(result.duration || 0),
+    totalQuestions: Number(result.totalQuestions || session?.maxQuestions || 0),
     questionsAttempted: result.answeredQuestions || 0,
     overallScore: toPercent(result.overallScore),
     skills: [
@@ -281,6 +290,8 @@ function formatReport(session, result, requestBody) {
         ? report.weaknesses
         : [],
     detailedReport: report,
+    history: Array.isArray(result.history) ? result.history : [],
+    pdfUrl: report.pdfUrl || report.reportPdfUrl || "",
   };
 }
 
@@ -302,7 +313,12 @@ const handleInterviewSession = async (req, res, next) => {
 
     if (action === "create") {
       const sessionType = normalizeType(req.body?.type);
-      const interview = resolveInterviewContext(req.body, sessionType);
+      const interview = resolveInterviewContext({
+        ...req.body,
+        // Prefer the verified identity when the auth provider supplies it.
+        // Client data is only a presentation fallback and is sanitized above.
+        candidateName: req.user?.full_name || req.user?.name || req.body?.candidateName,
+      }, sessionType);
       const duration = normalizeDuration(req.body?.duration);
       const maxQuestions = Math.max(
         3,
@@ -320,6 +336,7 @@ const handleInterviewSession = async (req, res, next) => {
         sessionType,
         interview.context,
         req.headers.authorization || "",
+        { generateAudio: req.webInterviewClient !== true },
       );
       return res.json({
         success: true,
@@ -360,6 +377,8 @@ const handleInterviewSession = async (req, res, next) => {
         null,
         null,
         true,
+        req.headers.authorization || "",
+        { generateAudio: req.webInterviewClient !== true },
       );
       return res.json({ success: true, data: result });
     }
@@ -375,7 +394,11 @@ const handleInterviewSession = async (req, res, next) => {
           "Secure interview ended after a client-side malpractice detection",
         );
       }
-      const result = await interviewService.completeInterview(sessionId);
+      const result = await interviewService.completeInterview(
+        sessionId,
+        req.headers.authorization || "",
+        { fastReport: req.webInterviewClient === true },
+      );
       return res.json({
         success: true,
         data: formatReport(session, result, req.body),
@@ -390,6 +413,12 @@ const handleInterviewSession = async (req, res, next) => {
   }
 };
 
+/** Browser-only HTTP entry point. Mobile keeps using /api/mock unchanged. */
+const handleWebInterviewSession = (req, res, next) => {
+  req.webInterviewClient = true;
+  return handleInterviewSession(req, res, next);
+};
+
 /**
  * Handle high-fidelity M4A upload from mobile (Advanced Async Path)
  * Bypasses WebSocket payload limits. Returns instant ACK to client.
@@ -398,6 +427,7 @@ const uploadAnswerAudio = async (req, res, next) => {
   try {
     const { sessionId, fallbackText } = req.body;
     const audioBuffer = req.file ? req.file.buffer : null;
+    const authorization = req.headers.authorization || "";
 
     // 1. SESSION VALIDATION: Check if session exists BEFORE ACK
     // This prevents "Analyzing" hangs if the server was restarted
@@ -434,6 +464,9 @@ const uploadAnswerAudio = async (req, res, next) => {
           sessionId,
           fallbackText,
           audioBuffer,
+          null,
+          true,
+          authorization,
         );
         const gateway = require("./interview.gateway");
 
@@ -446,7 +479,7 @@ const uploadAnswerAudio = async (req, res, next) => {
 
         if (result.isComplete) {
           const finalReport =
-            await interviewService.completeInterview(sessionId);
+            await interviewService.completeInterview(sessionId, authorization);
           gateway.broadcastToSession(
             sessionId,
             "session:complete",
@@ -510,4 +543,5 @@ module.exports = {
   uploadAnswerAudio,
   upload,
   handleInterviewSession,
+  handleWebInterviewSession,
 };

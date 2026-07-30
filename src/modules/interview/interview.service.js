@@ -4,6 +4,7 @@
  */
 const sessionManager = require('../../core/session');
 const openaiService = require('../ai/openai.service');
+const { runBillableAiOperation } = require('../../core/credit-billing.service');
 const sttService = require('../stt/stt.service');
 const ttsService = require('../tts/tts.service');
 const logger = require('../../core/logger');
@@ -12,6 +13,50 @@ const env = require('../../config/env');
 const { DEPARTMENTS, JOB_ROLES } = require('./interview.data');
 
 const REDIRECT_STATUSES = new Set([301, 302, 303, 307, 308]);
+
+function getIndianTimeGreeting() {
+  let hour = new Date().getHours();
+
+  try {
+    const hourPart = new Intl.DateTimeFormat('en-IN', {
+      timeZone: 'Asia/Kolkata',
+      hour: '2-digit',
+      hourCycle: 'h23',
+    }).formatToParts(new Date()).find((part) => part.type === 'hour');
+    hour = Number(hourPart?.value ?? hour);
+  } catch (_) {
+    // A standard server clock is a safe fallback if Intl timezone data is absent.
+  }
+
+  if (hour < 12) return 'Good morning';
+  if (hour < 17) return 'Good afternoon';
+  return 'Good evening';
+}
+
+function applyCandidateGreeting(questionText, interviewContext = {}) {
+  const firstName = String(interviewContext?.candidateName || "")
+    .trim()
+    .split(/\s+/)[0]
+    .replace(/[^a-zA-Z.'-]/g, "")
+    .slice(0, 60);
+  const question = String(questionText || "").trim();
+
+  if (!firstName || !question) return question;
+
+  // The service owns the greeting rather than trusting a model to consistently
+  // use the learner's name. Strip an AI-provided salutation first so it never
+  // reads as "Hello Sakthi, Good morning Sakthi".
+  const escapedName = firstName.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+  const questionWithoutGreeting = question.replace(
+    new RegExp(
+      `^(?:(?:hello|hi|good\\s+(?:morning|afternoon|evening))\\s*,?\\s*(?:${escapedName})?\\s*[,.!\\-–—]*\\s*)`,
+      'i',
+    ),
+    '',
+  ).trim();
+
+  return `${getIndianTimeGreeting()}, ${firstName}. ${questionWithoutGreeting || question}`;
+}
 
 function getAllowMethods(err) {
   const allow = err?.response?.headers?.allow;
@@ -93,7 +138,7 @@ class InterviewService {
   /**
    * Start a new interview session
    */
-  async startSession(userId, jobRoleId, jobRoleTitle, difficulty, maxQuestions, sessionType = 'interview', interviewContext = {}, authorization = '') {
+  async startSession(userId, jobRoleId, jobRoleTitle, difficulty, maxQuestions, sessionType = 'interview', interviewContext = {}, authorization = '', options = {}) {
     const session = await sessionManager.createSession(
       userId,
       jobRoleId,
@@ -104,8 +149,8 @@ class InterviewService {
       interviewContext
     );
 
-    // Persist and debit before making an AI request. STCAPI reads the active rate card
-    // and rejects sessions whose wallet cannot cover the configured service rate.
+    // Persist the session first. AI credits are settled from actual provider usage
+    // after each successful model response, never as a fixed interview pre-charge.
     try {
       await this.persistInterviewStart(userId, jobRoleId, session.sessionId, maxQuestions, authorization);
     } catch (err) {
@@ -114,14 +159,39 @@ class InterviewService {
     }
 
     // Generate first question
-    const questionText = await openaiService.generateFirstQuestion(jobRoleTitle, difficulty, sessionType, interviewContext);
+    const billedQuestion = await runBillableAiOperation({
+      authorization,
+      serviceKey: 'mock_interview',
+      reference: session.sessionId,
+      operation: () => openaiService.generateFirstQuestion(
+        jobRoleTitle,
+        difficulty,
+        sessionType,
+        interviewContext,
+      ),
+    });
+    const questionText = applyCandidateGreeting(
+      billedQuestion.data,
+      interviewContext,
+    );
 
-    // Generate TTS URL (optional — client can use on-device TTS)
+    if (typeof questionText !== 'string' || !questionText.trim()) {
+      await sessionManager.deleteSession(session.sessionId);
+      const error = new Error('The AI interviewer did not return an opening question. Please try again.');
+      error.statusCode = 502;
+      error.isOperational = true;
+      throw error;
+    }
+
+    // The mobile socket keeps its audio URL. Web clients use browser speech
+    // playback and receive the question immediately instead of waiting on TTS.
     let audioUrl = '';
-    try {
-      audioUrl = await ttsService.generateSpeechUrl(questionText);
-    } catch (err) {
-      logger.warn('TTS for first question failed, client will use on-device TTS');
+    if (options.generateAudio !== false) {
+      try {
+        audioUrl = await ttsService.generateSpeechUrl(questionText);
+      } catch (err) {
+        logger.warn('TTS for first question failed, client will use on-device TTS');
+      }
     }
 
     // Update session state
@@ -143,7 +213,7 @@ class InterviewService {
    * Process a candidate's answer (text or audio)
    * @param {boolean} shouldPersist - If true, the result is saved to the permanent PHP database
    */
-  async processAnswer(sessionId, answerText, audioBuffer, onPartialResult, shouldPersist = true) {
+  async processAnswer(sessionId, answerText, audioBuffer, onPartialResult, shouldPersist = true, authorization = '', options = {}) {
     const session = await sessionManager.getSession(sessionId);
     if (!session) {
       throw new Error('Session not found or expired');
@@ -186,27 +256,34 @@ class InterviewService {
     const tempAnswerSummary = transcript.length > 300 ? transcript.substring(0, 300) + '...' : transcript;
     const isCompletedAfterThis = (session.currentQuestion + 1) >= session.maxQuestions;
 
-    // Trigger Evaluation in BACKGROUND (Don't wait for it to block the response)
-    const evaluationPromise = openaiService.evaluateAnswer(
-      session.jobRoleTitle,
-      session.currentQuestionText,
-      transcript,
-      session.difficulty,
-      session.sessionType,
-      session.interviewContext
-    );
-
-    // Generate NEXT QUESTION immediately using faster mini model
-    const nextQuestion = isCompletedAfterThis 
-      ? null 
-      : await openaiService.generateNextQuestion(
+    const billedTurn = await runBillableAiOperation({
+      authorization,
+      serviceKey: 'mock_interview',
+      reference: sessionId,
+      operation: async () => {
+        const evaluationPromise = openaiService.evaluateAnswer(
           session.jobRoleTitle,
+          session.currentQuestionText,
+          transcript,
           session.difficulty,
-          [...session.history, { question: session.currentQuestionText, answerSummary: tempAnswerSummary }],
-          sessionManager.getSessionSummary(session).overallScore,
           session.sessionType,
-          session.interviewContext
+          session.interviewContext,
         );
+        const nextQuestionPromise = isCompletedAfterThis
+          ? Promise.resolve(null)
+          : openaiService.generateNextQuestion(
+            session.jobRoleTitle,
+            session.difficulty,
+            [...session.history, { question: session.currentQuestionText, answerSummary: tempAnswerSummary }],
+            sessionManager.getSessionSummary(session).overallScore,
+            session.sessionType,
+            session.interviewContext,
+          );
+        const [evaluation, nextQuestion] = await Promise.all([evaluationPromise, nextQuestionPromise]);
+        return { evaluation, nextQuestion };
+      },
+    });
+    const { evaluation, nextQuestion } = billedTurn.data;
 
     // [SPEED UP] Emit partial result with next question text immediately if callback provided
     if (nextQuestion && onPartialResult) {
@@ -223,16 +300,13 @@ class InterviewService {
 
     // Generate TTS if not completed
     let audioUrl = '';
-    if (nextQuestion) {
+    if (nextQuestion && options.generateAudio !== false) {
       try {
         audioUrl = await ttsService.generateSpeechUrl(nextQuestion);
       } catch (err) {
         logger.warn('TTS for next question failed');
       }
     }
-
-    // Now WAIT for evaluation to finalize the data slice (usually ready by now or soon)
-    const evaluation = await evaluationPromise;
 
     // Build question data for session history
     const questionData = {
@@ -288,7 +362,7 @@ class InterviewService {
   /**
    * Complete the interview and generate final report
    */
-  async completeInterview(sessionId) {
+  async completeInterview(sessionId, authorization = '', options = {}) {
     const session = await sessionManager.getSession(sessionId);
     if (!session) {
       throw new Error('Session not found or expired');
@@ -297,7 +371,18 @@ class InterviewService {
     const summary = sessionManager.getSessionSummary(session);
 
     // Generate AI-powered final report
-    const report = await openaiService.generateFinalReport(session.jobRoleTitle, summary, session.sessionType);
+    const billedReport = await runBillableAiOperation({
+      authorization,
+      serviceKey: 'mock_interview',
+      reference: sessionId,
+      operation: () => openaiService.generateFinalReport(
+        session.jobRoleTitle,
+        summary,
+        session.sessionType,
+        { fast: options.fastReport === true },
+      ),
+    });
+    const report = billedReport.data;
 
     // Persist final results to PHP API
     this.persistInterviewComplete(sessionId, summary, report).catch((err) =>

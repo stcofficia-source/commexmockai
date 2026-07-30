@@ -10,10 +10,10 @@ function safeName(name) {
 
 async function storeProjectFile(studentId, file) {
   const directory = path.join(uploadRoot, 'project-critiques', String(studentId), randomUUID());
-  await fs.mkdir(directory, { recursive: true });
+  await fs.mkdir(directory, { recursive: true, mode: 0o700 });
   const filename = `${randomUUID()}-${safeName(file.originalname)}`;
   const absolutePath = path.join(directory, filename);
-  await fs.writeFile(absolutePath, file.buffer);
+  await fs.writeFile(absolutePath, file.buffer, { flag: 'wx', mode: 0o600 });
   return { storagePath: path.relative(path.resolve(__dirname, '../../..'), absolutePath).replace(/\\/g, '/') };
 }
 

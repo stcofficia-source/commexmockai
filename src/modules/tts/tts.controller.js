@@ -1,6 +1,7 @@
 /**
  * TTS Streaming Controller
- * Provides a low-latency proxy to stream OpenAI TTS directly to the client.
+ * Provides a low-latency proxy to stream the configured Indian-English
+ * interviewer voice directly to the client.
  */
 const OpenAI = require('openai');
 const env = require('../../config/env');
@@ -15,7 +16,7 @@ const openai = new OpenAI({
  * Streams audio directly from OpenAI to the response
  */
 async function streamTts(req, res) {
-  const { text, voice = 'nova' } = req.query;
+  const { text } = req.query;
 
   if (!text) {
     return res.status(400).json({ error: 'Text parameter is required' });
@@ -25,8 +26,9 @@ async function streamTts(req, res) {
     logger.debug({ text: text.substring(0, 50) }, 'Initiating TTS Stream Proxy...');
 
     const response = await openai.audio.speech.create({
-      model: 'tts-1',
-      voice: voice,
+      model: env.OPENAI_TTS_MODEL,
+      voice: env.OPENAI_TTS_VOICE,
+      instructions: env.OPENAI_TTS_INSTRUCTIONS,
       input: text,
       speed: 0.95,
       response_format: 'mp3',

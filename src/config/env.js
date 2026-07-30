@@ -19,8 +19,36 @@ const env = {
   // AI Models
   GEMINI_API_KEY: process.env.GEMINI_API_KEY || '',
   OPENAI_API_KEY: process.env.OPENAI_API_KEY || '',
+  // The browser always asks for English (India); these server settings keep
+  // the generated interviewer audio aligned with that locale.
+  OPENAI_TTS_MODEL: process.env.OPENAI_TTS_MODEL || 'gpt-4o-mini-tts',
+  // Nova gives the clearest warm female delivery for this interviewer. Deployments
+  // can still explicitly override the voice through OPENAI_TTS_VOICE.
+  OPENAI_TTS_VOICE: process.env.OPENAI_TTS_VOICE || 'nova',
+  OPENAI_TTS_INSTRUCTIONS: process.env.OPENAI_TTS_INSTRUCTIONS || 'Speak in clear, warm female Indian English. Use a natural Indian-English cadence, a calm professional interview pace, and pronounce Indian names naturally. Do not use an American-style accent.',
   OPENAI_MENTOR_MODEL: process.env.OPENAI_MENTOR_MODEL || 'gpt-4o-mini',
-  OPENAI_MENTOR_MAX_OUTPUT_TOKENS: parseInt(process.env.OPENAI_MENTOR_MAX_OUTPUT_TOKENS || '700', 10),
+  OPENAI_MENTOR_MAX_OUTPUT_TOKENS: parseInt(process.env.OPENAI_MENTOR_MAX_OUTPUT_TOKENS || '1800', 10),
+  OPENAI_RESUME_MODEL: process.env.OPENAI_RESUME_MODEL || process.env.OPENAI_MENTOR_MODEL || 'gpt-4o-mini',
+  OPENAI_RESUME_MAX_OUTPUT_TOKENS: parseInt(process.env.OPENAI_RESUME_MAX_OUTPUT_TOKENS || '2200', 10),
+  OPENAI_PRESENTATION_MODEL: process.env.OPENAI_PRESENTATION_MODEL || process.env.OPENAI_MENTOR_MODEL || 'gpt-4o-mini',
+  OPENAI_PRESENTATION_MAX_OUTPUT_TOKENS: parseInt(process.env.OPENAI_PRESENTATION_MAX_OUTPUT_TOKENS || '16000', 10),
+  OPENAI_REQUEST_TIMEOUT_MS: parseInt(process.env.OPENAI_REQUEST_TIMEOUT_MS || '45000', 10),
+  OPENAI_MAX_RETRIES: parseInt(process.env.OPENAI_MAX_RETRIES || '2', 10),
+  AI_PROVIDER_PRICING_PATH: process.env.AI_PROVIDER_PRICING_PATH || '',
+  AI_PROVIDER_PRICING_JSON: process.env.AI_PROVIDER_PRICING_JSON || '',
+  RESUME_ANALYSIS_CACHE_TTL_MS: parseInt(process.env.RESUME_ANALYSIS_CACHE_TTL_MS || '300000', 10),
+  RESUME_ANALYSIS_CACHE_MAX_ENTRIES: parseInt(process.env.RESUME_ANALYSIS_CACHE_MAX_ENTRIES || '100', 10),
+  PROJECT_CRITIQUE_MODEL: process.env.PROJECT_CRITIQUE_MODEL || process.env.OPENAI_MENTOR_MODEL || 'gpt-4o-mini',
+  PROJECT_CRITIQUE_MAX_OUTPUT_TOKENS: parseInt(process.env.PROJECT_CRITIQUE_MAX_OUTPUT_TOKENS || '6000', 10),
+
+  // Project upload security. Production fails closed when ClamAV is unavailable.
+  PROJECT_UPLOAD_SCAN_MODE: process.env.PROJECT_UPLOAD_SCAN_MODE || ((process.env.NODE_ENV || 'development') === 'production' ? 'strict' : 'compatible'),
+  CLAMAV_CLAMSCAN_PATH: process.env.CLAMAV_CLAMSCAN_PATH || '/usr/bin/clamscan',
+  CLAMAV_CLAMDSCAN_PATH: process.env.CLAMAV_CLAMDSCAN_PATH || '/usr/bin/clamdscan',
+  CLAMAV_SOCKET: process.env.CLAMAV_SOCKET || '',
+  CLAMAV_HOST: process.env.CLAMAV_HOST || '',
+  CLAMAV_PORT: parseInt(process.env.CLAMAV_PORT || '3310', 10),
+  CLAMAV_TIMEOUT_MS: parseInt(process.env.CLAMAV_TIMEOUT_MS || '120000', 10),
 
   // AssemblyAI
   ASSEMBLYAI_API_KEY: process.env.ASSEMBLYAI_API_KEY || '',

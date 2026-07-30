@@ -1,0 +1,26 @@
+{
+  "version": "2026-07-28",
+  "effectiveAt": "2026-07-28T00:00:00+05:30",
+  "billingCurrency": "INR",
+  "exchangeRates": {
+    "USD_INR": 96.1856
+  },
+  "providers": {
+    "openai": {
+      "models": {
+        "gpt-4o-mini": {
+          "currency": "USD",
+          "inputPerMillion": 0.15,
+          "cachedInputPerMillion": 0.075,
+          "outputPerMillion": 0.6
+        },
+        "gpt-4o": {
+          "currency": "USD",
+          "inputPerMillion": 2.5,
+          "cachedInputPerMillion": 1.25,
+          "outputPerMillion": 10
+        }
+      }
+    }
+  }
+}

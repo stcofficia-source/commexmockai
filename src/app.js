@@ -57,6 +57,10 @@ const { authenticate } = require('./core/middleware/auth');
 // Mock Interview Module Routes (Protected)
 app.use('/api/mock', authenticate, require('./modules/interview/interview.routes'));
 
+// Browser mock interviews use their own fast REST/socket contract. The mobile
+// app remains on /api/mock and its existing WebSocket path.
+app.use('/api/web/mock-interviews', authenticate, require('./modules/interview/web-interview.routes'));
+
 // Dashboard Module Routes (Protected)
 app.use('/api/dashboard', authenticate, require('./modules/dashboard/dashboard.routes'));
 
@@ -72,6 +76,10 @@ app.use('/api/resumes', authenticate, require('./modules/resume/resume.routes'))
 
 // File parsing and GPT analysis stay in Express; STC/PHP persists the result.
 app.use('/api/project-critiques', authenticate, require('./modules/project-critique/project-critique.routes'));
+
+// Presentation text is extracted by the web server; model execution and exact
+// provider-usage credit settlement remain in the shared AI backend.
+app.use('/api/presentation-coach', authenticate, require('./modules/presentation-coach/presentation-coach.routes'));
 
 // API version info
 app.get('/api/info', (req, res) => {

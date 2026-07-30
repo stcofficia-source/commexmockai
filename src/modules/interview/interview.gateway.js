@@ -1,6 +1,8 @@
 /**
  * Interview WebSocket Gateway
- * Handles real-time communication with the React Native client
+ * Handles real-time communication for the mobile client and the separate
+ * browser client. Their paths are isolated while their secure session service
+ * remains shared.
  */
 const { WebSocketServer } = require('ws');
 const { WS_EVENTS } = require('../../config/constants');
@@ -14,22 +16,26 @@ const activeConnections = new Map();
 /**
  * Initialize WebSocket server on an existing HTTP server
  */
-function initWebSocket(server) {
+function createInterviewSocketServer(server, path, clientChannel) {
   const wss = new WebSocketServer({
-    server,
-    path: '/ws/interview',
+    // The HTTP server owns the single upgrade listener below. Registering two
+    // `ws` servers directly against one HTTP server makes the first listener
+    // reject the other path with HTTP 400 before it can be handled.
+    noServer: true,
     maxPayload: 10 * 1024 * 1024, // 10MB max payload for audio
   });
 
   wss.on('connection', (ws, req) => {
     const clientId = `client_${Date.now()}_${Math.random().toString(36).substring(7)}`;
-    logger.info({ clientId }, 'WebSocket client connected');
+    logger.info({ clientId, clientChannel }, 'WebSocket client connected');
 
     // Store connection metadata
     activeConnections.set(clientId, {
       ws,
       sessionId: null,
       userId: null,
+      authorization: '',
+      clientChannel,
       connectedAt: Date.now(),
     });
 
@@ -78,8 +84,35 @@ function initWebSocket(server) {
     clearInterval(heartbeat);
   });
 
-  logger.info('WebSocket server initialized at /ws/interview');
+  logger.info({ path, clientChannel }, 'Interview WebSocket server initialized');
   return wss;
+}
+
+function initWebSocket(server) {
+  const mobile = createInterviewSocketServer(server, '/ws/interview', 'mobile');
+  const web = createInterviewSocketServer(server, '/ws/web-interview', 'web');
+
+  const socketServers = new Map([
+    ['/ws/interview', mobile],
+    ['/ws/web-interview', web],
+  ]);
+
+  server.on('upgrade', (req, socket, head) => {
+    const pathname = new URL(req.url, 'http://localhost').pathname;
+    const target = socketServers.get(pathname);
+
+    if (!target) {
+      socket.write('HTTP/1.1 404 Not Found\r\n\r\n');
+      socket.destroy();
+      return;
+    }
+
+    target.handleUpgrade(req, socket, head, (ws) => {
+      target.emit('connection', ws, req);
+    });
+  });
+
+  return { mobile, web };
 }
 
 /**
@@ -93,6 +126,10 @@ async function handleMessage(clientId, ws, message) {
   switch (event) {
     case WS_EVENTS.SESSION_START:
       await handleSessionStart(clientId, ws, data);
+      break;
+
+    case WS_EVENTS.SESSION_ATTACH:
+      await handleSessionAttach(clientId, ws, data);
       break;
 
     case WS_EVENTS.ANSWER_TEXT:
@@ -146,6 +183,7 @@ async function handleSessionStart(clientId, ws, data) {
 
   try {
     sendEvent(ws, WS_EVENTS.ANSWER_PROCESSING, { status: 'initializing' });
+    const connection = activeConnections.get(clientId);
 
     const result = await interviewService.startSession(
       userId,
@@ -153,7 +191,10 @@ async function handleSessionStart(clientId, ws, data) {
       jobRoleTitle,
       difficulty || 'mid',
       maxQuestions || 10,
-      sessionType || 'interview'
+      sessionType || 'interview',
+      {},
+      `Bearer ${token}`,
+      { generateAudio: connection?.clientChannel !== 'web' },
     );
 
     // Update connection metadata
@@ -161,6 +202,7 @@ async function handleSessionStart(clientId, ws, data) {
     if (conn) {
       conn.sessionId = result.sessionId;
       conn.userId = userId;
+      conn.authorization = `Bearer ${token}`;
       conn.turn = 'ai'; // AI goes first
     }
 
@@ -182,12 +224,48 @@ async function handleSessionStart(clientId, ws, data) {
   }
 }
 
+/** Attach the browser socket to the session created by the browser REST API. */
+async function handleSessionAttach(clientId, ws, data) {
+  const { sessionId, token } = data || {};
+  if (!sessionId || !token) {
+    return sendError(ws, 'VALIDATION_ERROR', 'sessionId and token are required');
+  }
+
+  const user = await authorizeSocket(token);
+  if (!user) return sendError(ws, 'UNAUTHORIZED', 'Invalid or expired authentication token');
+
+  const session = await require('../../core/session').getSession(sessionId);
+  if (!session || String(session.userId) !== String(user.id)) {
+    return sendError(ws, 'SESSION_NOT_FOUND', 'Interview session has expired. Start a new interview.');
+  }
+
+  const connection = activeConnections.get(clientId);
+  if (connection) {
+    connection.sessionId = sessionId;
+    connection.userId = user.id;
+    connection.authorization = `Bearer ${token}`;
+    connection.turn = 'ai';
+  }
+
+  sendEvent(ws, WS_EVENTS.SESSION_READY, { sessionId });
+  if (session.currentQuestionText) {
+    sendEvent(ws, WS_EVENTS.QUESTION_NEW, {
+      questionNumber: session.currentQuestion + 1,
+      totalQuestions: session.maxQuestions,
+      questionText: session.currentQuestionText,
+      audioUrl: '',
+    });
+  }
+}
+
 /**
  * Handle answer submitted as text (from client-side speech recognition)
  * This is the PRIMARY path — expo-speech-recognition handles STT on device
  */
 async function handleAnswerText(clientId, ws, data) {
   const { sessionId, answerText } = data || {};
+  const connection = activeConnections.get(clientId);
+  const authorization = connection?.authorization || '';
 
   if (!sessionId || !answerText) {
     return sendError(ws, 'VALIDATION_ERROR', 'sessionId and answerText are required');
@@ -197,16 +275,26 @@ async function handleAnswerText(clientId, ws, data) {
     // Notify client that processing has begun
     sendEvent(ws, WS_EVENTS.ANSWER_PROCESSING, { status: 'evaluating' });
 
+    // Web does not wait for TTS, so a partial question provides no latency
+    // benefit and would render the same prompt twice. Preserve the existing
+    // mobile partial/TTS behaviour while sending one clean streamed turn to
+    // the browser.
+    const sendPartialQuestion = connection?.clientChannel === 'web'
+      ? undefined
+      : (partial) => {
+        if (partial.nextQuestion) {
+          sendEvent(ws, WS_EVENTS.QUESTION_NEW, partial.nextQuestion);
+        }
+      };
+
     const result = await interviewService.processAnswer(
       sessionId, 
       answerText, 
       null,
-      (partial) => {
-        if (partial.nextQuestion) {
-          sendEvent(ws, WS_EVENTS.QUESTION_NEW, partial.nextQuestion);
-        }
-      },
-      false // [AUDIO-ONLY RULE] Do not persist WebSocket text to DB. High-fidelity REST upload will handle persistence.
+      sendPartialQuestion,
+      false, // [AUDIO-ONLY RULE] Do not persist WebSocket text to DB. High-fidelity REST upload will handle persistence.
+      authorization,
+      { generateAudio: connection?.clientChannel !== 'web' },
     );
 
     // Update turn state
@@ -247,6 +335,8 @@ async function handleAnswerText(clientId, ws, data) {
  */
 async function handleAnswerAudio(clientId, ws, data) {
   const { sessionId, audioBase64 } = data || {};
+  const connection = activeConnections.get(clientId);
+  const authorization = connection?.authorization || '';
 
   if (!sessionId || !audioBase64) {
     return sendError(ws, 'VALIDATION_ERROR', 'sessionId and audioBase64 are required');
@@ -256,16 +346,21 @@ async function handleAnswerAudio(clientId, ws, data) {
     sendEvent(ws, WS_EVENTS.ANSWER_PROCESSING, { status: 'transcribing' });
 
     const audioBuffer = Buffer.from(audioBase64, 'base64');
+    const sendPartialQuestion = connection?.clientChannel === 'web'
+      ? undefined
+      : (partial) => {
+        if (partial.nextQuestion) {
+          sendEvent(ws, WS_EVENTS.QUESTION_NEW, partial.nextQuestion);
+        }
+      };
     const result = await interviewService.processAnswer(
       sessionId, 
       null, 
       audioBuffer,
-      (partial) => {
-        if (partial.nextQuestion) {
-          sendEvent(ws, WS_EVENTS.QUESTION_NEW, partial.nextQuestion);
-        }
-      },
-      false // [AUDIO-ONLY RULE] Do not persist WS audio fallbacks to DB. Use high-fidelity REST upload path instead.
+      sendPartialQuestion,
+      false, // [AUDIO-ONLY RULE] Do not persist WS audio fallbacks to DB. Use high-fidelity REST upload path instead.
+      authorization,
+      { generateAudio: connection?.clientChannel !== 'web' },
     );
 
     sendEvent(ws, WS_EVENTS.ANSWER_PROCESSING, { status: 'evaluated' });
@@ -306,7 +401,11 @@ async function handleInterviewComplete(clientId, ws, sessionId) {
   try {
     sendEvent(ws, WS_EVENTS.ANSWER_PROCESSING, { status: 'generating_report' });
 
-    const report = await interviewService.completeInterview(sessionId);
+    const connection = activeConnections.get(clientId);
+    const authorization = connection?.authorization || '';
+    const report = await interviewService.completeInterview(sessionId, authorization, {
+      fastReport: connection?.clientChannel === 'web',
+    });
 
     sendEvent(ws, WS_EVENTS.SESSION_COMPLETE, {
       sessionId,
@@ -337,7 +436,11 @@ async function handleSessionEnd(clientId, ws, data) {
   if (!sessionId) return;
 
   try {
-    const report = await interviewService.completeInterview(sessionId);
+    const connection = activeConnections.get(clientId);
+    const authorization = connection?.authorization || '';
+    const report = await interviewService.completeInterview(sessionId, authorization, {
+      fastReport: connection?.clientChannel === 'web',
+    });
 
     sendEvent(ws, WS_EVENTS.SESSION_COMPLETE, {
       sessionId,
