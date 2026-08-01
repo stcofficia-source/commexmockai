@@ -115,11 +115,10 @@ async function analyzeUpload(userId, authHeader, file) {
       serviceKey: 'resume_ai',
       reference: `resume-upload:${fingerprint}`,
       operation: async () => {
-        const imported = await parseResumeDocument(analysisPayload);
-        const analysis = await analyzeResume({
-          ...analysisPayload,
-          form: imported.form,
-        });
+        const [imported, analysis] = await Promise.all([
+          parseResumeDocument(analysisPayload),
+          analyzeResume(analysisPayload),
+        ]);
         return { imported, analysis };
       },
     });
