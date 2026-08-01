@@ -25,6 +25,15 @@ async function bootstrap() {
     initWebSocket(server);
 
     // 5. Start listening
+    server.on('error', (err) => {
+      if (err.code === 'EADDRINUSE') {
+        logger.error(`Port ${env.PORT} is already in use. Please run: kill -9 $(lsof -t -i:${env.PORT})`);
+        process.exit(1);
+      } else {
+        logger.error({ err }, 'Server error');
+      }
+    });
+
     server.listen(env.PORT, () => {
       logger.info(`
 ╔═══════════════════════════════════════════════╗
