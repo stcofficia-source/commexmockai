@@ -9,7 +9,12 @@ const { getRolesSchema, getHistorySchema, uploadAudioSchema } = require('./inter
 
 router.get('/departments', controller.getDepartments);
 router.post('/resume/analyze', controller.analyzeResume);
-router.post('/interviews', controller.handleInterviewSession);
+router.post('/interviews', (req, res, next) => {
+  if (String(req.headers['x-interview-client'] || '').toLowerCase() === 'web') {
+    req.webInterviewClient = true;
+  }
+  next();
+}, controller.handleInterviewSession);
 router.get('/stt/token', controller.getAssemblyToken);
 router.get('/departments/:id/roles', validate(getRolesSchema), controller.getRolesByDepartment);
 router.get('/roles/:id', controller.getRoleDetail);
