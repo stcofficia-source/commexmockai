@@ -7,20 +7,22 @@ const controller = require('./interview.controller');
 const validate = require('../../core/middleware/validate');
 const { getRolesSchema, getHistorySchema, uploadAudioSchema } = require('./interview.validation');
 
-router.get('/departments', controller.getDepartments);
-router.post('/resume/analyze', controller.analyzeResume);
-router.post('/interviews', (req, res, next) => {
+const markWebInterviewClient = (req, res, next) => {
   if (String(req.headers['x-interview-client'] || '').toLowerCase() === 'web') {
     req.webInterviewClient = true;
   }
   next();
-}, controller.handleInterviewSession);
+};
+
+router.get('/departments', controller.getDepartments);
+router.post('/resume/analyze', controller.analyzeResume);
+router.post('/interviews', markWebInterviewClient, controller.handleInterviewSession);
 router.get('/stt/token', controller.getAssemblyToken);
 router.get('/departments/:id/roles', validate(getRolesSchema), controller.getRolesByDepartment);
 router.get('/roles/:id', controller.getRoleDetail);
 router.get('/interviews/:sessionId/report', controller.getReport);
 router.get('/history', validate(getHistorySchema), controller.getHistory);
-router.post('/stt/upload', controller.upload, validate(uploadAudioSchema), controller.uploadAnswerAudio);
+router.post('/stt/upload', markWebInterviewClient, controller.upload, validate(uploadAudioSchema), controller.uploadAnswerAudio);
 router.get('/tts/stream', require('../tts/tts.controller').streamTts);
 
 module.exports = router;

@@ -186,6 +186,7 @@ function resolveResumeProfile(profile = {}) {
     experienceLevel: normalizeExperienceLevel(profile.experienceLevel),
     education: safeList(profile.education, 8, 180),
     detectedSkills: safeList(profile.detectedSkills, 20, 80),
+    projects: safeList(profile.projects, 8, 260),
     summary: safeText(profile.summary, 500),
   };
 }
@@ -257,8 +258,10 @@ function resolveInterviewContext(body, sessionType) {
       experienceLevel: normalizeExperienceLevel(body?.experienceLevel),
       skills: safeList(body?.skills),
       education: safeList(body?.education, 8, 140),
+      projects: safeList(body?.projects, 8, 260),
       focus: safeList(body?.focus, 6, 80),
       resumeName: safeText(body?.resume?.name, 180),
+      resumeSummary: safeText(body?.resumeSummary, 600),
       candidateName: safeText(body?.candidateName, 80),
     },
   };
@@ -463,6 +466,25 @@ const uploadAnswerAudio = async (req, res, next) => {
       "📥 REST: Audio upload received (Async Path)",
     );
 
+    // Browser interviews need the evaluated answer and next question in the
+    // same authenticated request. Mobile retains the existing instant-ACK +
+    // WebSocket broadcast flow.
+    if (req.webInterviewClient === true) {
+      const result = await interviewService.processAnswer(
+        sessionId,
+        fallbackText,
+        audioBuffer,
+        null,
+        true,
+        authorization,
+        {
+          generateAudio: false,
+          audioContentType: req.file?.mimetype || "audio/webm",
+        },
+      );
+      return res.json({ success: true, data: result });
+    }
+
     // 2. INSTANT ACK: Tell mobile we got the file
     res.json({ success: true, message: "Processing started" });
 
@@ -477,7 +499,10 @@ const uploadAnswerAudio = async (req, res, next) => {
           null,
           true,
           authorization,
-          { generateAudio: false },
+          {
+            generateAudio: false,
+            audioContentType: req.file?.mimetype || "audio/mp4",
+          },
         );
         const gateway = require("./interview.gateway");
 

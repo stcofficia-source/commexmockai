@@ -5,6 +5,7 @@
 const axios = require('axios');
 const env = require('../../config/env');
 const logger = require('../../core/logger');
+const { AppError } = require('../../core/errors');
 
 const ASSEMBLYAI_BASE = 'https://api.assemblyai.com/v2';
 const DEFAULT_SPEECH_MODELS = ['universal-2'];
@@ -27,8 +28,12 @@ function getSpeechModels() {
  */
 async function transcribeAudio(audioBuffer, contentType = 'audio/webm') {
   if (!env.ASSEMBLYAI_API_KEY) {
-    logger.warn('No AssemblyAI API key — returning mock transcription');
-    return 'This is a mock transcription for development testing.';
+    logger.error('ASSEMBLYAI_API_KEY is not configured');
+    throw new AppError(
+      'Recorded-answer transcription is not configured on this server.',
+      503,
+      'STT_NOT_CONFIGURED',
+    );
   }
 
   try {
@@ -88,16 +93,21 @@ async function transcribeAudio(audioBuffer, contentType = 'audio/webm') {
     
     return result;
   } catch (err) {
+    if (err instanceof AppError) throw err;
     const errorMsg = err.response?.data?.error || err.message;
     logger.error({ err: errorMsg }, '❌ AssemblyAI: Transcription failed');
-    return '';
+    throw new AppError(
+      'The recorded answer could not be transcribed. Please record it again.',
+      502,
+      'STT_PROVIDER_ERROR',
+    );
   }
 }
 
 /**
  * Poll AssemblyAI for transcription completion
  */
-async function pollTranscription(transcriptId, maxAttempts = 30) {
+async function pollTranscription(transcriptId, maxAttempts = 60) {
   for (let i = 0; i < maxAttempts; i++) {
     try {
       const res = await axios.get(`${ASSEMBLYAI_BASE}/transcript/${transcriptId}`, {
@@ -113,19 +123,34 @@ async function pollTranscription(transcriptId, maxAttempts = 30) {
 
       if (status === 'error') {
         logger.error({ transcriptId, error }, 'Transcription error');
-        return '';
+        throw new AppError(
+          'The transcription service could not read this recording. Please record it again.',
+          422,
+          'STT_AUDIO_UNREADABLE',
+        );
       }
 
-      // Wait before next poll (Advanced Hyper-Speed: 150ms)
-      await new Promise((resolve) => setTimeout(resolve, 150));
+      // Real interview recordings commonly need several seconds to process.
+      // Give the provider up to 30 seconds instead of returning an empty
+      // transcript after the former 4.5-second polling window.
+      await new Promise((resolve) => setTimeout(resolve, 500));
     } catch (err) {
+      if (err instanceof AppError) throw err;
       logger.error({ err: err.message }, 'Poll request failed');
-      return '';
+      throw new AppError(
+        'The transcription service is temporarily unavailable. Please try again.',
+        502,
+        'STT_PROVIDER_ERROR',
+      );
     }
   }
 
   logger.warn({ transcriptId }, 'Transcription polling timeout');
-  return '';
+  throw new AppError(
+    'Transcription is taking too long. Please send the answer again.',
+    504,
+    'STT_TIMEOUT',
+  );
 }
 
 /**

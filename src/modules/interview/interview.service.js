@@ -269,14 +269,27 @@ class InterviewService {
     }
 
     // TRANSCRIPTION PRIORITY:
-    // 1. If audio exists → AssemblyAI transcription is the ONLY authority
-    // 2. answerText (from expo-speech-recognition) is ONLY a fallback if AssemblyAI fails
+    // 1. Recorded audio is transcribed by AssemblyAI.
+    // 2. The client live transcript is used only if provider transcription fails.
     let transcript = '';
     
     if (audioBuffer) {
       // PRIMARY: Use AssemblyAI for accurate speech-to-text
       logger.info({ sessionId }, 'Transcribing audio via AssemblyAI...');
-      transcript = await sttService.transcribeAudio(audioBuffer);
+      try {
+        transcript = await sttService.transcribeAudio(
+          audioBuffer,
+          options.audioContentType || 'audio/webm',
+        );
+      } catch (transcriptionError) {
+        // A browser/mobile live transcript is a valid continuity fallback, but
+        // never replace missing server STT with invented or placeholder text.
+        if (!String(answerText || '').trim()) throw transcriptionError;
+        logger.warn(
+          { sessionId, error: transcriptionError.message },
+          'Server transcription failed, using the client live transcript',
+        );
+      }
       
       // If AssemblyAI returned empty/failed, fall back to client-side text
       if (!transcript || transcript.trim().length < 3) {
@@ -291,7 +304,13 @@ class InterviewService {
     transcript = sttService.passthrough(transcript);
 
     if (!transcript || transcript.trim().length < 3) {
-      transcript = '(No answer provided)';
+      throw new AppError(
+        audioBuffer
+          ? 'No clear speech was detected in the recording. Check the selected microphone and record the answer again.'
+          : 'Record an answer before continuing.',
+        422,
+        'ANSWER_NOT_CAPTURED',
+      );
     }
 
     logger.debug(
@@ -389,6 +408,7 @@ class InterviewService {
         isComplete: true,
         evaluation,
         questionNumber: updatedSession.currentQuestion,
+        transcript,
       };
     }
 
@@ -402,6 +422,7 @@ class InterviewService {
       isComplete: false,
       evaluation,
       questionNumber: updatedSession.currentQuestion,
+      transcript,
       nextQuestion: {
         questionNumber: updatedSession.currentQuestion + 1,
         totalQuestions: updatedSession.maxQuestions,
