@@ -416,6 +416,73 @@ const handleInterviewSession = async (req, res, next) => {
   }
 };
 
+/** Recover the active question when browser sessionStorage was lost or stale. */
+const getCurrentInterviewSession = async (req, res, next) => {
+  try {
+    const userId = currentUserId(req);
+    if (!userId) {
+      return res.status(401).json({
+        success: false,
+        message: "User ID is missing from the verified session.",
+      });
+    }
+
+    const sessionId = safeText(req.params?.sessionId, 64);
+    if (!/^[A-Za-z0-9-]{10,64}$/.test(sessionId)) {
+      return res.status(400).json({
+        success: false,
+        message: "A valid interview session is required.",
+      });
+    }
+
+    const session = await sessionManager.getSession(sessionId);
+    if (!session) {
+      return res.status(404).json({
+        success: false,
+        message: "Interview session has expired. Start a new interview.",
+      });
+    }
+    if (String(session.userId) !== String(userId)) {
+      return res.status(403).json({
+        success: false,
+        message: "This interview belongs to another student.",
+      });
+    }
+    if (!safeText(session.currentQuestionText, 2000)) {
+      return res.status(409).json({
+        success: false,
+        message: "The AI interviewer has not prepared the current question. Start a new interview.",
+      });
+    }
+
+    const publicType = session.sessionType === "resume_upload"
+      ? "resume"
+      : session.sessionType === "role_based"
+        ? "role-based"
+        : session.sessionType || "general";
+    const questionIndex = Math.max(0, Number(session.currentQuestion || 0));
+    const questions = Array.from({ length: questionIndex }, () => null);
+    questions.push(session.currentQuestionText);
+
+    return res.json({
+      success: true,
+      data: {
+        sessionId: session.sessionId,
+        type: publicType,
+        role: session.jobRoleTitle,
+        context: session.interviewContext || {},
+        difficulty: session.difficulty || "medium",
+        duration: 10,
+        totalQuestions: Number(session.maxQuestions || 1),
+        questionNumber: questionIndex + 1,
+        questions,
+      },
+    });
+  } catch (error) {
+    return next(error);
+  }
+};
+
 /** Browser-only HTTP entry point. Mobile keeps using /api/mock unchanged. */
 const handleWebInterviewSession = (req, res, next) => {
   req.webInterviewClient = true;
@@ -580,4 +647,5 @@ module.exports = {
   upload,
   handleInterviewSession,
   handleWebInterviewSession,
+  getCurrentInterviewSession,
 };

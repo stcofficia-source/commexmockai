@@ -17,6 +17,7 @@ const markWebInterviewClient = (req, res, next) => {
 router.get('/departments', controller.getDepartments);
 router.post('/resume/analyze', controller.analyzeResume);
 router.post('/interviews', markWebInterviewClient, controller.handleInterviewSession);
+router.get('/interviews/:sessionId/current', controller.getCurrentInterviewSession);
 router.get('/stt/token', controller.getAssemblyToken);
 router.get('/departments/:id/roles', validate(getRolesSchema), controller.getRolesByDepartment);
 router.get('/roles/:id', controller.getRoleDetail);
