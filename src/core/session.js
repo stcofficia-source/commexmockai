@@ -8,6 +8,7 @@ const env = require('../config/env');
 const logger = require('./logger');
 
 const SESSION_PREFIX = 'interview:session:';
+const SESSION_LOCK_PREFIX = 'interview:lock:';
 
 /**
  * Create a new interview session
@@ -135,6 +136,37 @@ async function deleteSession(sessionId) {
   logger.info({ sessionId }, 'Session deleted');
 }
 
+/** Shorten or extend the TTL for an existing session without rewriting it. */
+async function expireSession(sessionId, seconds) {
+  const redis = getRedis();
+  return redis.expire(`${SESSION_PREFIX}${sessionId}`, Math.max(1, Number(seconds) || 1));
+}
+
+/** Acquire a short distributed lock for one answer/completion mutation. */
+async function acquireSessionLock(sessionId, seconds = 180) {
+  const redis = getRedis();
+  const token = uuidv4();
+  const result = await redis.set(
+    `${SESSION_LOCK_PREFIX}${sessionId}`,
+    token,
+    'NX',
+    'EX',
+    Math.max(1, Number(seconds) || 180),
+  );
+  return result === 'OK' ? token : null;
+}
+
+/** Release only the lock created by this caller. */
+async function releaseSessionLock(sessionId, token) {
+  if (!token) return false;
+  const redis = getRedis();
+  const key = `${SESSION_LOCK_PREFIX}${sessionId}`;
+  const current = await redis.get(key);
+  if (current !== token) return false;
+  await redis.del(key);
+  return true;
+}
+
 module.exports = {
   createSession,
   getSession,
@@ -142,4 +174,7 @@ module.exports = {
   addAnswerToSession,
   getSessionSummary,
   deleteSession,
+  expireSession,
+  acquireSessionLock,
+  releaseSessionLock,
 };

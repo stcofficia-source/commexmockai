@@ -443,6 +443,16 @@ const uploadAnswerAudio = async (req, res, next) => {
         .status(404)
         .json({ success: false, message: "Session not found or expired" });
     }
+    if (String(session.userId) !== String(req.user?.id)) {
+      return res
+        .status(403)
+        .json({ success: false, message: "This interview belongs to another student." });
+    }
+    if (!audioBuffer && !String(fallbackText || "").trim()) {
+      return res
+        .status(400)
+        .json({ success: false, message: "Record an answer before submitting." });
+    }
 
     logger.info(
       {
@@ -467,6 +477,7 @@ const uploadAnswerAudio = async (req, res, next) => {
           null,
           true,
           authorization,
+          { generateAudio: false },
         );
         const gateway = require("./interview.gateway");
 
@@ -519,7 +530,7 @@ const uploadAnswerAudio = async (req, res, next) => {
         const gateway = require("./interview.gateway");
         gateway.broadcastToSession(sessionId, "error", {
           message: bgErr.message,
-          code: "SESSION_EXPIRED",
+          code: bgErr.code || "ANSWER_PROCESS_FAILED",
         });
       }
     });

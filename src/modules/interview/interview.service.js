@@ -11,6 +11,7 @@ const logger = require('../../core/logger');
 const axios = require('axios');
 const env = require('../../config/env');
 const { DEPARTMENTS, JOB_ROLES } = require('./interview.data');
+const { AppError, SessionError } = require('../../core/errors');
 
 const REDIRECT_STATUSES = new Set([301, 302, 303, 307, 308]);
 
@@ -58,15 +59,6 @@ function applyCandidateGreeting(questionText, interviewContext = {}) {
   return `${getIndianTimeGreeting()}, ${firstName}. ${questionWithoutGreeting || question}`;
 }
 
-function getAllowMethods(err) {
-  const allow = err?.response?.headers?.allow;
-  if (!allow || typeof allow !== 'string') return [];
-  return allow
-    .split(',')
-    .map((m) => m.trim().toUpperCase())
-    .filter(Boolean);
-}
-
 function summarizeAxiosError(err) {
   const status = err?.response?.status;
   const statusText = err?.response?.statusText;
@@ -82,6 +74,25 @@ function summarizeAxiosError(err) {
     location,
     message,
   };
+}
+
+function phpPersistenceError(err, fallbackMessage) {
+  const status = Number(err?.response?.status || 0);
+  const message = err?.response?.data?.message || fallbackMessage;
+  // The PHP service is an upstream dependency. Keep authentication/payment
+  // statuses intact, but represent upstream server/network failures as a 502.
+  const clientStatus = status >= 400 && status < 500 ? status : 502;
+  return new AppError(message, clientStatus, 'INTERVIEW_PERSISTENCE_ERROR');
+}
+
+function phpReadError(err, fallbackMessage) {
+  const status = Number(err?.response?.status || 0);
+  const message = err?.response?.data?.message || fallbackMessage;
+  return new AppError(
+    message,
+    status >= 400 && status < 500 ? status : 502,
+    'INTERVIEW_REPORT_ERROR',
+  );
 }
 
 async function axiosRequestPreserveMethodOnRedirect(config, maxRedirects = 3) {
@@ -158,24 +169,34 @@ class InterviewService {
       throw err;
     }
 
-    // Generate first question
-    const billedQuestion = await runBillableAiOperation({
-      authorization,
-      serviceKey: 'mock_interview',
-      reference: session.sessionId,
-      operation: () => openaiService.generateFirstQuestion(
-        jobRoleTitle,
-        difficulty,
-        sessionType,
-        interviewContext,
-      ),
-    });
+    // Generate first question. If the provider or credit settlement fails after
+    // the durable row is created, close that row instead of leaving a phantom
+    // in-progress interview in history.
+    let billedQuestion;
+    try {
+      billedQuestion = await runBillableAiOperation({
+        authorization,
+        serviceKey: 'mock_interview',
+        reference: session.sessionId,
+        operation: () => openaiService.generateFirstQuestion(
+          jobRoleTitle,
+          difficulty,
+          sessionType,
+          interviewContext,
+        ),
+      });
+    } catch (err) {
+      await this.persistInterviewAbandoned(session.sessionId, authorization).catch(() => undefined);
+      await sessionManager.deleteSession(session.sessionId);
+      throw err;
+    }
     const questionText = applyCandidateGreeting(
       billedQuestion.data,
       interviewContext,
     );
 
     if (typeof questionText !== 'string' || !questionText.trim()) {
+      await this.persistInterviewAbandoned(session.sessionId, authorization).catch(() => undefined);
       await sessionManager.deleteSession(session.sessionId);
       const error = new Error('The AI interviewer did not return an opening question. Please try again.');
       error.statusCode = 502;
@@ -214,9 +235,37 @@ class InterviewService {
    * @param {boolean} shouldPersist - If true, the result is saved to the permanent PHP database
    */
   async processAnswer(sessionId, answerText, audioBuffer, onPartialResult, shouldPersist = true, authorization = '', options = {}) {
+    const lockToken = await sessionManager.acquireSessionLock(sessionId);
+    if (!lockToken) {
+      throw new AppError(
+        'This answer is already being processed. Please wait for the next question.',
+        409,
+        'ANSWER_ALREADY_PROCESSING',
+      );
+    }
+
+    try {
+      return await this.processAnswerUnlocked(
+        sessionId,
+        answerText,
+        audioBuffer,
+        onPartialResult,
+        shouldPersist,
+        authorization,
+        options,
+      );
+    } finally {
+      await sessionManager.releaseSessionLock(sessionId, lockToken);
+    }
+  }
+
+  async processAnswerUnlocked(sessionId, answerText, audioBuffer, onPartialResult, shouldPersist = true, authorization = '', options = {}) {
     const session = await sessionManager.getSession(sessionId);
     if (!session) {
-      throw new Error('Session not found or expired');
+      throw new SessionError('Session not found or expired');
+    }
+    if (session.state === 'completed' || session.state === 'finalizing') {
+      throw new AppError('This interview is already being finalized.', 409, 'INTERVIEW_FINALIZING');
     }
 
     // TRANSCRIPTION PRIORITY:
@@ -321,14 +370,17 @@ class InterviewService {
       feedback: evaluation.feedback,
     };
 
-    // Add to session history
-    const updatedSession = await sessionManager.addAnswerToSession(sessionId, questionData);
-
-    // Persist question to PHP API (Only if shouldPersist is true — usually REST path)
+    // Persist before advancing the live session. A failed database write must be
+    // visible to the caller and must never silently create a report with missing
+    // answers. The PHP endpoint is idempotent for a session/question pair.
     if (shouldPersist) {
-      this.persistQuestion(sessionId, questionData).catch((err) =>
-        logger.error({ err: err.message }, 'Failed to persist question')
-      );
+      await this.persistQuestion(sessionId, questionData, authorization);
+    }
+
+    // Advance the Redis session only after the durable answer write succeeds.
+    const updatedSession = await sessionManager.addAnswerToSession(sessionId, questionData);
+    if (!updatedSession) {
+      throw new SessionError('Session expired while the answer was being saved.');
     }
 
     // Check if interview is complete
@@ -363,38 +415,77 @@ class InterviewService {
    * Complete the interview and generate final report
    */
   async completeInterview(sessionId, authorization = '', options = {}) {
-    const session = await sessionManager.getSession(sessionId);
-    if (!session) {
-      throw new Error('Session not found or expired');
+    const lockToken = await sessionManager.acquireSessionLock(sessionId);
+    if (!lockToken) {
+      throw new AppError(
+        'The current answer is still being processed. Please wait before ending the interview.',
+        409,
+        'INTERVIEW_BUSY',
+      );
     }
 
-    const summary = sessionManager.getSessionSummary(session);
+    try {
+      return await this.completeInterviewUnlocked(sessionId, authorization, options);
+    } finally {
+      await sessionManager.releaseSessionLock(sessionId, lockToken);
+    }
+  }
 
-    // Generate AI-powered final report
-    const billedReport = await runBillableAiOperation({
+  async completeInterviewUnlocked(sessionId, authorization = '', options = {}) {
+    const session = await sessionManager.getSession(sessionId);
+    if (!session) {
+      throw new SessionError('Session not found or expired');
+    }
+    if (session.state === 'completed' && session.completionResult) {
+      return {
+        ...session.completionResult.summary,
+        report: session.completionResult.report,
+      };
+    }
+
+    // Cache the generated report in Redis before persistence. If the PHP write
+    // fails or times out, a retry reuses this exact report and does not bill the
+    // learner for a second final-report generation.
+    let completion = session.pendingCompletion || session.completionResult || null;
+    if (!completion) {
+      const summary = sessionManager.getSessionSummary(session);
+      const billedReport = await runBillableAiOperation({
+        authorization,
+        serviceKey: 'mock_interview',
+        reference: sessionId,
+        operation: () => openaiService.generateFinalReport(
+          session.jobRoleTitle,
+          summary,
+          session.sessionType,
+          { fast: options.fastReport === true },
+        ),
+      });
+      completion = { summary, report: billedReport.data };
+      await sessionManager.updateSession(sessionId, {
+        state: 'finalizing',
+        pendingCompletion: completion,
+      });
+    }
+
+    await this.persistInterviewComplete(
+      sessionId,
+      completion.summary,
+      completion.report,
       authorization,
-      serviceKey: 'mock_interview',
-      reference: sessionId,
-      operation: () => openaiService.generateFinalReport(
-        session.jobRoleTitle,
-        summary,
-        session.sessionType,
-        { fast: options.fastReport === true },
-      ),
-    });
-    const report = billedReport.data;
-
-    // Persist final results to PHP API
-    this.persistInterviewComplete(sessionId, summary, report).catch((err) =>
-      logger.error({ err: err.message }, 'Failed to persist interview completion')
     );
 
-    // Clean up session
-    await sessionManager.deleteSession(sessionId);
+    // Retain a short-lived completed record so duplicate mobile/web end events
+    // return the same result instead of becoming a misleading session error.
+    await sessionManager.updateSession(sessionId, {
+      state: 'completed',
+      pendingCompletion: null,
+      completionResult: completion,
+    });
+    await sessionManager.expireSession(sessionId, 600);
 
     return {
-      ...summary,
-      report,
+      ...completion.summary,
+      report: completion.report,
     };
   }
 
@@ -421,14 +512,29 @@ class InterviewService {
       return createdId || null;
     } catch (err) {
       logger.error({ err: summarizeAxiosError(err), sessionId }, 'PHP API: persistInterviewStart failed');
-      throw err;
+      throw phpPersistenceError(err, 'The interview session could not be created. Please try again.');
+    }
+  }
+
+  async persistInterviewAbandoned(sessionId, authorization = '') {
+    try {
+      await axiosRequestPreserveMethodOnRedirect({
+        method: 'put',
+        url: `${env.STC_API_BASE_URL}/v1/mock/interviews/${sessionId}`,
+        headers: { 'content-type': 'application/json', ...(authorization ? { authorization } : {}) },
+        timeout: 10000,
+        data: { status: 'abandoned' },
+      });
+    } catch (err) {
+      logger.error({ err: summarizeAxiosError(err), sessionId }, 'PHP API: abandon interview failed');
+      throw phpPersistenceError(err, 'The failed interview session could not be closed.');
     }
   }
 
   /**
    * Persist individual question to PHP API
    */
-  async persistQuestion(sessionId, questionData) {
+  async persistQuestion(sessionId, questionData, authorization = '') {
     try {
       const payload = {
         session_id: sessionId,
@@ -442,58 +548,24 @@ class InterviewService {
         ai_feedback: questionData.feedback,
       };
 
-      const url = `${env.STC_API_BASE_URL}/v1/mock/interviews/${sessionId}/questions`;
-      const methodsToTry = ['post', 'put', 'patch'];
-
-      // If the interview row isn't created yet (race), create it once then retry.
-      // This avoids losing answers when the candidate replies very quickly after session start.
-      let hasCreatedInterview = false;
-
-      for (const method of methodsToTry) {
-        try {
-          await axiosRequestPreserveMethodOnRedirect({
-            method,
-            url,
-            headers: { 'content-type': 'application/json' },
-            timeout: 8000,
-            data: payload,
-          });
-          logger.debug({ sessionId, qNum: questionData.questionNumber, method }, 'Synced question to PHP API');
-          return;
-        } catch (err) {
-          const status = err?.response?.status;
-          const message = err?.response?.data?.message;
-
-          if (!hasCreatedInterview && status === 404 && typeof message === 'string' && message.toLowerCase().includes('interview not found')) {
-            const session = await sessionManager.getSession(sessionId);
-            if (session) {
-              hasCreatedInterview = true;
-              await this.persistInterviewStart(session.userId, session.jobRoleId, sessionId, session.maxQuestions);
-              continue;
-            }
-          }
-
-          // Common production issue: server redirects and some clients convert POST -> GET.
-          // Another common case: route changed to PUT/PATCH. If we get 405, try other methods.
-          if (status === 405) {
-            const allowMethods = getAllowMethods(err);
-            const nextMethod = methodsToTry.find((m) => m !== method && (!allowMethods.length || allowMethods.includes(m.toUpperCase())));
-            if (nextMethod) continue;
-          }
-
-          // Non-405 errors (401/403/404/422/500) are not recoverable by switching methods.
-          throw err;
-        }
-      }
+      await axiosRequestPreserveMethodOnRedirect({
+        method: 'post',
+        url: `${env.STC_API_BASE_URL}/v1/mock/interviews/${sessionId}/questions`,
+        headers: { 'content-type': 'application/json', ...(authorization ? { authorization } : {}) },
+        timeout: 10000,
+        data: payload,
+      });
+      logger.debug({ sessionId, qNum: questionData.questionNumber }, 'Synced question to PHP API');
     } catch (err) {
       logger.error({ err: summarizeAxiosError(err), sessionId }, 'PHP API: persistQuestion failed');
+      throw phpPersistenceError(err, 'The interview answer could not be saved. Please try again.');
     }
   }
 
   /**
    * Persist interview completion to PHP API
    */
-  async persistInterviewComplete(sessionId, summary, report) {
+  async persistInterviewComplete(sessionId, summary, report, authorization = '') {
     try {
       const payload = {
         session_id: sessionId,
@@ -515,12 +587,14 @@ class InterviewService {
       await axiosRequestPreserveMethodOnRedirect({
         method: 'put',
         url: `${env.STC_API_BASE_URL}/v1/mock/interviews/${sessionId}`,
-        headers: { 'content-type': 'application/json' },
+        headers: { 'content-type': 'application/json', ...(authorization ? { authorization } : {}) },
+        timeout: 10000,
         data: payload,
       });
       logger.info({ sessionId }, 'Synced interview completion to PHP API');
     } catch (err) {
       logger.error({ err: summarizeAxiosError(err), sessionId }, 'PHP API: persistInterviewComplete failed');
+      throw phpPersistenceError(err, 'The interview report could not be saved. Please try again.');
     }
   }
 
@@ -534,9 +608,8 @@ class InterviewService {
       });
       return resp.data.data;
     } catch (err) {
-      const phpError = err.response?.data?.message || err.message;
-      logger.error({ err: phpError, sessionId }, 'PHP API: getReport failed');
-      throw new Error(phpError);
+      logger.error({ err: summarizeAxiosError(err), sessionId }, 'PHP API: getReport failed');
+      throw phpReadError(err, 'The interview report could not be loaded.');
     }
   }
 
@@ -551,9 +624,8 @@ class InterviewService {
       });
       return resp.data.data;
     } catch (err) {
-      const phpError = err.response?.data?.message || err.message;
-      logger.error({ err: phpError, userId }, 'PHP API: getHistory failed');
-      throw new Error(phpError);
+      logger.error({ err: summarizeAxiosError(err), userId }, 'PHP API: getHistory failed');
+      throw phpReadError(err, 'Interview history could not be loaded.');
     }
   }
 }

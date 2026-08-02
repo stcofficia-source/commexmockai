@@ -25,6 +25,10 @@ const memoryClient = {
   },
 
   async set(key, value, ...args) {
+    const current = memoryStore.get(key);
+    if (args.includes('NX') && current && (!current.expiry || Date.now() <= current.expiry)) {
+      return null;
+    }
     const item = { value };
     // Handle EX (seconds) argument
     const exIdx = args.indexOf('EX');

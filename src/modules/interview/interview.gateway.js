@@ -270,6 +270,9 @@ async function handleAnswerText(clientId, ws, data) {
   if (!sessionId || !answerText) {
     return sendError(ws, 'VALIDATION_ERROR', 'sessionId and answerText are required');
   }
+  if (!connection?.sessionId || connection.sessionId !== sessionId) {
+    return sendError(ws, 'SESSION_OWNERSHIP_ERROR', 'This socket is not attached to that interview session.');
+  }
 
   try {
     // Notify client that processing has begun
@@ -292,7 +295,7 @@ async function handleAnswerText(clientId, ws, data) {
       answerText, 
       null,
       sendPartialQuestion,
-      false, // [AUDIO-ONLY RULE] Do not persist WebSocket text to DB. High-fidelity REST upload will handle persistence.
+      true,
       authorization,
       { generateAudio: connection?.clientChannel !== 'web' },
     );
@@ -341,6 +344,9 @@ async function handleAnswerAudio(clientId, ws, data) {
   if (!sessionId || !audioBase64) {
     return sendError(ws, 'VALIDATION_ERROR', 'sessionId and audioBase64 are required');
   }
+  if (!connection?.sessionId || connection.sessionId !== sessionId) {
+    return sendError(ws, 'SESSION_OWNERSHIP_ERROR', 'This socket is not attached to that interview session.');
+  }
 
   try {
     sendEvent(ws, WS_EVENTS.ANSWER_PROCESSING, { status: 'transcribing' });
@@ -358,7 +364,7 @@ async function handleAnswerAudio(clientId, ws, data) {
       null, 
       audioBuffer,
       sendPartialQuestion,
-      false, // [AUDIO-ONLY RULE] Do not persist WS audio fallbacks to DB. Use high-fidelity REST upload path instead.
+      true,
       authorization,
       { generateAudio: connection?.clientChannel !== 'web' },
     );
@@ -437,6 +443,9 @@ async function handleSessionEnd(clientId, ws, data) {
 
   try {
     const connection = activeConnections.get(clientId);
+    if (!connection?.sessionId || connection.sessionId !== sessionId) {
+      return sendError(ws, 'SESSION_OWNERSHIP_ERROR', 'This socket is not attached to that interview session.');
+    }
     const authorization = connection?.authorization || '';
     const report = await interviewService.completeInterview(sessionId, authorization, {
       fastReport: connection?.clientChannel === 'web',
