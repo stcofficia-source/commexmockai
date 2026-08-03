@@ -32,6 +32,7 @@ const feedbackSchema = {
     'strengths',
     'suggestions',
     'speakerNotes',
+    'deckPlan',
     'slides',
   ],
   properties: {
