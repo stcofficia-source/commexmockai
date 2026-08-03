@@ -248,11 +248,6 @@ async function analyze(slideInput, projectContext = '') {
 
   const slides = normalizeSlides(slideInput);
   const context = normalizeProjectContext(projectContext);
-  const client = new OpenAI({
-    apiKey: env.OPENAI_API_KEY,
-    timeout: env.OPENAI_REQUEST_TIMEOUT_MS,
-    maxRetries: env.OPENAI_MAX_RETRIES,
-  });
 
   const userMessageContent = [
     {

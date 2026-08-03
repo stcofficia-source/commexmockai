@@ -2,15 +2,10 @@
  * Text-to-Speech Service
  * Uses a configurable OpenAI TTS interviewer voice.
  */
-const OpenAI = require('openai');
 const fs = require('fs');
 const path = require('path');
 const env = require('../../config/env');
 const logger = require('../../core/logger');
-
-const openai = new OpenAI({
-  apiKey: env.OPENAI_API_KEY,
-});
 
 // Storage path for generated speech files
 const TTS_DIR = path.join(__dirname, '../../../public/tts');
