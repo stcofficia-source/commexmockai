@@ -9,7 +9,7 @@ const TEXT_LIMIT = 60000;
 const ALLOWED_BY_KIND = {
   resume: new Set(['pdf', 'doc', 'docx', 'txt']),
   project: new Set([
-    'pdf', 'doc', 'docx', 'ppt', 'pptx', 'zip',
+    'pdf', 'doc', 'docx', 'zip',
     'txt', 'md', 'markdown', 'csv', 'json', 'xml', 'yaml', 'yml', 'rtf',
     'js', 'jsx', 'mjs', 'cjs', 'ts', 'tsx', 'php', 'py', 'java', 'c', 'cc', 'cpp',
     'h', 'hpp', 'cs', 'go', 'rs', 'rb', 'swift', 'kt', 'kts', 'sql', 'sh', 'bash',
@@ -33,10 +33,6 @@ function text(value) {
   return String(value || '').replace(/\s+/g, ' ').trim().slice(0, TEXT_LIMIT);
 }
 
-// Most document formats are easier to review as a single normalized paragraph.
-// A presentation is different: the slide boundary is evidence.  Preserve it so
-// an AI review can point to the right slide and keep each slide's feedback
-// separate instead of merging the entire deck into one piece of text.
 function structuredText(value) {
   return String(value || '')
     .replace(/\r\n?/g, '\n')
@@ -52,8 +48,6 @@ function unreadableDocumentError(extension) {
     pdf: 'PDF',
     doc: 'Word',
     docx: 'Word',
-    ppt: 'PowerPoint',
-    pptx: 'PowerPoint',
     zip: 'ZIP archive',
   };
   return new ValidationError(`The ${labels[extension] || 'uploaded'} file is damaged or cannot be read. Export or download a fresh copy and upload it again.`);
@@ -72,12 +66,15 @@ function xmlText(value) {
 async function validate(file, kind) {
   const base = String(file?.originalname || '').split(/[\\/]/).pop().toLowerCase();
   const extension = base === 'dockerfile' ? 'dockerfile' : base === '.env' ? 'env' : base === '.gitignore' ? 'gitignore' : extensionOf(file?.originalname);
+  if (['ppt', 'pptx'].includes(extension)) {
+    throw new ValidationError('PowerPoint files (.pptx, .ppt) are analyzed in Presentation Coach. Please upload PDF, Word, text, code, or ZIP files here.');
+  }
   if (!file?.buffer?.length || !ALLOWED_BY_KIND[kind]?.has(extension)) {
     throw new ValidationError(`Upload a supported ${kind} file.`);
   }
   const detected = await detectFileType(file.buffer).catch(() => undefined);
   const detectedExtension = detected?.ext;
-  if (detectedExtension && extension !== detectedExtension && !(extension === 'docx' && detectedExtension === 'zip') && !(extension === 'pptx' && detectedExtension === 'zip')) {
+  if (detectedExtension && extension !== detectedExtension && !(extension === 'docx' && detectedExtension === 'zip')) {
     throw new ValidationError('The file contents do not match its extension.');
   }
   return extension;
@@ -103,47 +100,67 @@ function archiveText(buffer) {
   return text(blocks.join('\n\n'));
 }
 
-function legacyPowerPointText(buffer) {
-  const container = CFB.read(buffer, { type: 'buffer' });
-  const stream = container.FileIndex?.find((entry) => /\/powerpoint document$/i.test(entry.name || entry.FullPath || ''))
-    || container.FileIndex?.find((entry) => /powerpoint document/i.test(entry.name || ''));
-  if (!stream?.content?.length) throw new ValidationError('The PowerPoint document does not contain a readable slide stream.');
-  const source = Buffer.from(stream.content);
-  const values = [];
-  for (let offset = 0; offset + 8 <= source.length; offset += 1) {
-    const recordType = source.readUInt16LE(offset + 2);
-    const length = source.readUInt32LE(offset + 4);
-    if (![4000, 4008].includes(recordType) || !length || length > 1024 * 1024 || offset + 8 + length > source.length) continue;
-    const body = source.subarray(offset + 8, offset + 8 + length);
-    const value = recordType === 4000 ? body.toString('utf16le') : body.toString('latin1');
-    const cleaned = value.replace(/[\u0000-\u0008\u000b\u000c\u000e-\u001f]/g, ' ').replace(/\s+/g, ' ').trim();
-    if (cleaned.length > 1) values.push(cleaned);
-    offset += 7 + length;
+async function pdfTextWithPageMarkers(buffer) {
+  try {
+    let pageNumber = 0;
+    const parsed = await pdfParse(buffer, {
+      pagerender: async (page) => {
+        pageNumber += 1;
+        const content = await page.getTextContent({ normalizeWhitespace: true, disableCombineTextItems: false });
+        const pageText = content.items
+          .map((item) => String(item.str || '').trim())
+          .filter(Boolean)
+          .join(' ');
+        return `\n[Page ${pageNumber}]\n${pageText}`;
+      },
+    });
+    const parsedText = text(parsed.text);
+    if (parsedText.length >= 10) return parsedText;
+  } catch (err) {
+    // fallback to stream extraction if pdfParse errors out
   }
-  const unique = Array.from(new Set(values));
-  if (!unique.length) throw new ValidationError('No readable text was found in the PowerPoint document.');
-  return text(unique.join('\n'));
+
+  // Raw text stream string fallback
+  try {
+    const rawString = buffer.toString('latin1');
+    const matches = rawString.match(/\(([^()\\]|\\[\s\S])*\)/g) || [];
+    const extracted = matches
+      .map((m) => m.slice(1, -1).replace(/\\([0-7]{3})/g, (_, oct) => String.fromCharCode(parseInt(oct, 8))).replace(/\\(.)/g, '$1'))
+      .filter((t) => t.trim().length > 1)
+      .join(' ');
+    const fallbackText = text(extracted);
+    if (fallbackText.length >= 10) return fallbackText;
+  } catch (err) {
+    // ignore
+  }
+
+  throw unreadableDocumentError('pdf');
 }
 
-async function pdfTextWithPageMarkers(buffer) {
-  let pageNumber = 0;
-  const parsed = await pdfParse(buffer, {
-    pagerender: async (page) => {
-      pageNumber += 1;
-      const content = await page.getTextContent({ normalizeWhitespace: true, disableCombineTextItems: false });
-      const pageText = content.items
-        .map((item) => String(item.str || '').trim())
-        .filter(Boolean)
-        .join(' ');
-      return `\n[Page ${pageNumber}]\n${pageText}`;
-    },
-  });
-  return text(parsed.text);
+async function docxTextWithXmlFallback(buffer) {
+  let extracted = '';
+  try {
+    const parsed = await mammoth.extractRawText({ buffer });
+    extracted = text(parsed.value);
+  } catch (err) {
+    // fallback to XML extraction
+  }
+  if (!extracted || extracted.length < 5) {
+    try {
+      const archive = new AdmZip(buffer);
+      const docXml = archive.getEntry('word/document.xml')?.getData()?.toString('utf8');
+      if (docXml) extracted = xmlText(docXml);
+    } catch (err) {
+      // ignore
+    }
+  }
+  if (extracted && extracted.length >= 2) return extracted;
+  throw unreadableDocumentError('docx');
 }
 
 async function extractText(file, kind) {
   const extension = await validate(file, kind);
-  if (!['pdf', 'doc', 'docx', 'ppt', 'pptx', 'zip'].includes(extension)) {
+  if (!['pdf', 'doc', 'docx', 'zip'].includes(extension)) {
     return { extension, text: text(file.buffer.toString('utf8').replace(/\u0000/g, '')) };
   }
   try {
@@ -151,27 +168,12 @@ async function extractText(file, kind) {
       return { extension, text: await pdfTextWithPageMarkers(file.buffer) };
     }
     if (extension === 'docx') {
-      const parsed = await mammoth.extractRawText({ buffer: file.buffer });
-      return { extension, text: text(parsed.value) };
+      return { extension, text: await docxTextWithXmlFallback(file.buffer) };
     }
     if (extension === 'doc') {
       const extracted = await new WordExtractor().extract(file.buffer);
       return { extension, text: text([extracted.getHeaders(), extracted.getBody(), extracted.getFootnotes(), extracted.getEndnotes()].filter(Boolean).join('\n')) };
     }
-    if (extension === 'pptx') {
-      const archive = new AdmZip(file.buffer);
-      const slides = archive.getEntries()
-        .filter((entry) => /^ppt\/slides\/slide\d+\.xml$/i.test(entry.entryName))
-        .sort((left, right) => left.entryName.localeCompare(right.entryName, undefined, { numeric: true }))
-        .map((entry) => {
-          const slideText = xmlText(entry.getData().toString('utf8'));
-          const slideNumber = entry.entryName.match(/slide(\d+)\.xml$/i)?.[1];
-          return slideText ? `[Slide ${slideNumber || '?'}]\n${slideText}` : '';
-        })
-        .filter(Boolean);
-      return { extension, text: structuredText(slides.join('\n\n')) };
-    }
-    if (extension === 'ppt') return { extension, text: legacyPowerPointText(file.buffer) };
     if (extension === 'zip') return { extension, text: archiveText(file.buffer) };
   } catch (error) {
     if (error instanceof ValidationError) throw error;
