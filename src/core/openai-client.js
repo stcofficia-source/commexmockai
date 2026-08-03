@@ -19,7 +19,7 @@ function getOpenAIClient() {
   if (!openaiInstance) {
     openaiInstance = new OpenAI({
       apiKey: env.OPENAI_API_KEY,
-      timeout: env.OPENAI_REQUEST_TIMEOUT_MS || 45000,
+      timeout: env.OPENAI_REQUEST_TIMEOUT_MS || 120000,
       maxRetries: env.OPENAI_MAX_RETRIES || 2,
     });
   }
@@ -37,18 +37,22 @@ async function createChatCompletion({
   responseFormat,
   maxTokens,
   modelOverride,
+  timeout = 120000,
 }) {
   const client = getOpenAIClient();
   const selectedModel = model || env.OPENAI_MODEL || 'gpt-4o-mini';
 
   try {
-    const completion = await client.chat.completions.create({
-      model: selectedModel,
-      messages,
-      temperature,
-      ...(responseFormat ? { response_format: responseFormat } : {}),
-      ...(maxTokens ? { max_completion_tokens: maxTokens } : {}),
-    });
+    const completion = await client.chat.completions.create(
+      {
+        model: selectedModel,
+        messages,
+        temperature,
+        ...(responseFormat ? { response_format: responseFormat } : {}),
+        ...(maxTokens ? { max_completion_tokens: maxTokens } : {}),
+      },
+      { timeout },
+    );
 
     captureOpenAiUsage(completion, modelOverride || selectedModel);
     return completion;
