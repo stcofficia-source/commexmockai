@@ -21,6 +21,12 @@ const WS_EVENTS = {
   SESSION_PAUSE: 'session:pause',
   SESSION_RESUME: 'session:resume',
 
+  // Live Streaming STT
+  SPEECH_STREAM_START: 'speech:stream_start',
+  SPEECH_AUDIO_CHUNK: 'speech:audio_chunk',
+  SPEECH_STREAM_STOP: 'speech:stream_stop',
+  SPEECH_TRANSCRIPT: 'speech:transcript',
+
   // Server → Client
   SESSION_READY: 'session:ready',
   QUESTION_NEW: 'question:new',

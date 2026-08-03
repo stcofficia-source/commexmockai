@@ -124,6 +124,18 @@ async function handleMessage(clientId, ws, message) {
   logger.debug({ clientId, event }, 'Received WS event');
 
   switch (event) {
+    case WS_EVENTS.SPEECH_STREAM_START:
+      await handleSpeechStreamStart(clientId, ws, data);
+      break;
+
+    case WS_EVENTS.SPEECH_AUDIO_CHUNK:
+      await handleSpeechAudioChunk(clientId, ws, data);
+      break;
+
+    case WS_EVENTS.SPEECH_STREAM_STOP:
+      await handleSpeechStreamStop(clientId, ws, data);
+      break;
+
     case WS_EVENTS.SESSION_START:
       await handleSessionStart(clientId, ws, data);
       break;
@@ -498,6 +510,72 @@ function broadcastToSession(sessionId, event, data) {
     if (conn.sessionId === sessionId) {
       sendEvent(conn.ws, event, data);
     }
+  }
+}
+
+async function handleSpeechStreamStart(clientId, ws, data) {
+  const conn = activeConnections.get(clientId);
+  if (!conn) return sendError(ws, 'UNAUTHORIZED', 'No active connection found');
+
+  if (conn.realtimeTranscriber) {
+    try {
+      await conn.realtimeTranscriber.close();
+    } catch {
+      // ignore
+    }
+    conn.realtimeTranscriber = null;
+  }
+
+  const sampleRate = data?.sampleRate || 16000;
+  const assemblyService = require('../../services/assembly.service');
+
+  const transcriber = assemblyService.createRealtimeSession({
+    sampleRate,
+    onTranscript: (result) => {
+      sendEvent(ws, WS_EVENTS.SPEECH_TRANSCRIPT, result);
+    },
+    onError: (err) => {
+      logger.error({ clientId, err: err?.message }, 'Live STT Stream Error');
+    },
+    onClose: () => {
+      logger.debug({ clientId }, 'Live STT Stream Closed');
+    },
+  });
+
+  if (transcriber) {
+    conn.realtimeTranscriber = transcriber;
+    await transcriber.connect().catch((err) => {
+      logger.error({ clientId, err: err.message }, 'Failed to connect AssemblyAI Transcriber');
+    });
+  }
+}
+
+async function handleSpeechAudioChunk(clientId, ws, data) {
+  const conn = activeConnections.get(clientId);
+  if (!conn || !conn.realtimeTranscriber) return;
+
+  const audioBase64 = data?.audioBase64 || (typeof data === 'string' ? data : null);
+  if (!audioBase64) return;
+
+  try {
+    const chunkBuffer = Buffer.from(audioBase64, 'base64');
+    conn.realtimeTranscriber.sendAudio(chunkBuffer);
+  } catch (err) {
+    logger.debug({ clientId, err: err.message }, 'Failed to forward audio chunk');
+  }
+}
+
+async function handleSpeechStreamStop(clientId, ws, data) {
+  const conn = activeConnections.get(clientId);
+  if (!conn) return;
+
+  if (conn.realtimeTranscriber) {
+    try {
+      await conn.realtimeTranscriber.close();
+    } catch {
+      // ignore
+    }
+    conn.realtimeTranscriber = null;
   }
 }
 
