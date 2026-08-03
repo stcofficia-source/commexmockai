@@ -33,6 +33,20 @@ function text(value) {
   return String(value || '').replace(/\s+/g, ' ').trim().slice(0, TEXT_LIMIT);
 }
 
+// Most document formats are easier to review as a single normalized paragraph.
+// A presentation is different: the slide boundary is evidence.  Preserve it so
+// an AI review can point to the right slide and keep each slide's feedback
+// separate instead of merging the entire deck into one piece of text.
+function structuredText(value) {
+  return String(value || '')
+    .replace(/\r\n?/g, '\n')
+    .replace(/[\t\f\v ]+/g, ' ')
+    .replace(/ *\n */g, '\n')
+    .replace(/\n{3,}/g, '\n\n')
+    .trim()
+    .slice(0, TEXT_LIMIT);
+}
+
 function unreadableDocumentError(extension) {
   const labels = {
     pdf: 'PDF',
@@ -149,9 +163,13 @@ async function extractText(file, kind) {
       const slides = archive.getEntries()
         .filter((entry) => /^ppt\/slides\/slide\d+\.xml$/i.test(entry.entryName))
         .sort((left, right) => left.entryName.localeCompare(right.entryName, undefined, { numeric: true }))
-        .map((entry) => xmlText(entry.getData().toString('utf8')))
+        .map((entry) => {
+          const slideText = xmlText(entry.getData().toString('utf8'));
+          const slideNumber = entry.entryName.match(/slide(\d+)\.xml$/i)?.[1];
+          return slideText ? `[Slide ${slideNumber || '?'}]\n${slideText}` : '';
+        })
         .filter(Boolean);
-      return { extension, text: text(slides.join('\n')) };
+      return { extension, text: structuredText(slides.join('\n\n')) };
     }
     if (extension === 'ppt') return { extension, text: legacyPowerPointText(file.buffer) };
     if (extension === 'zip') return { extension, text: archiveText(file.buffer) };

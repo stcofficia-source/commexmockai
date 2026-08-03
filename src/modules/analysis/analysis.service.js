@@ -63,6 +63,15 @@ function cleanProjectConcepts(value, limit = 4) {
     .slice(0, limit);
 }
 
+function cleanProjectPoints(value, limit = 6, characterLimit = 700) {
+  const points = Array.isArray(value) ? value : value == null ? [] : [value];
+  return Array.from(new Set(points
+    .filter((item) => typeof item === 'string' || typeof item === 'number')
+    .map((item) => text(item).slice(0, characterLimit))
+    .filter(Boolean)))
+    .slice(0, limit);
+}
+
 function cleanProjectContent(value) {
   const source = value && typeof value === 'object' ? value : {};
   return {
@@ -74,8 +83,12 @@ function cleanProjectContent(value) {
     scopeAndLimits: cleanList(source.scopeAndLimits, 6),
     sections: cleanRecords(source.sections, (item) => {
       const title = text(item.title).slice(0, 180);
+      const location = text(item.location || item.sourceLocation).slice(0, 240);
       const whatItContains = text(item.whatItContains || item.content).slice(0, 1400);
       const whyItMatters = text(item.whyItMatters || item.purpose).slice(0, 800);
+      const currentContent = cleanProjectPoints(item.currentContent || item.extractedContent, 8, 700);
+      const whatWorks = cleanProjectPoints(item.whatWorks, 6, 600);
+      const gaps = cleanProjectPoints(item.gaps, 6, 600);
       const concepts = cleanProjectConcepts(item.concepts, 4);
       const evidence = cleanList(item.evidence, 5);
       const rawVisual = item.visualSuggestion && typeof item.visualSuggestion === 'object' ? item.visualSuggestion : {};
@@ -88,14 +101,22 @@ function cleanProjectContent(value) {
       const rawImprovement = item.improvement && typeof item.improvement === 'object' ? item.improvement : {};
       const improvement = {
         title: text(rawImprovement.title).slice(0, 180),
+        currentGap: text(rawImprovement.currentGap).slice(0, 700),
+        industryStandard: text(rawImprovement.industryStandard || rawImprovement.recommendedPractice).slice(0, 700),
         recommendation: text(rawImprovement.recommendation || rawImprovement.action).slice(0, 900),
+        suggestedContent: cleanProjectPoints(rawImprovement.suggestedContent || rawImprovement.replacementContent, 8, 700),
+        implementationSteps: cleanProjectPoints(rawImprovement.implementationSteps || rawImprovement.revisionSteps, 6, 600),
         reason: text(rawImprovement.reason).slice(0, 700),
       };
-      if (!title && !whatItContains) return null;
+      if (!title && !whatItContains && !currentContent.length) return null;
       return {
         title,
+        location,
         whatItContains,
         whyItMatters,
+        currentContent,
+        whatWorks,
+        gaps,
         concepts,
         evidence,
         visualSuggestion,
@@ -689,7 +710,11 @@ The uploaded file contents are authoritative evidence. The project title, submis
 
 First infer what the supplied evidence actually is (for example, a written report, source code, design artifact, data analysis, or a mixture) and its domain (for example software, finance, medical, arts, research, commerce, or another evidenced domain). Review only claims that can be supported by that evidence. Never score code quality without actual source code. Never score functionality without implementation, executable behavior, tests, or comparable direct evidence. Never score UI/UX without UI/design evidence. Never score performance without measurements, profiling, tests, or comparable evidence. Never score security without code, configuration, architecture, threat-model, or security-test evidence. A readable report may be assessed as documentation or report evidence, but it must not be represented as application code.
 
-Before giving a critique, explain the actual project content in a way a student and reviewer can understand: the objective, approach, source sections/topics, concepts or methods used, and what each section demonstrates. This explanation is the primary output; recommendations are secondary. For a software/code submission, describe only code concepts, architecture, data flow, algorithms, libraries, tests, and technical trade-offs that the uploaded code/report actually evidences. For a finance/report submission, identify only ratios, formulae, financial statements, datasets, periods, or analytical methods that appear in the evidence, explain how they are used, and recommend a relevant chart only when the required values exist. For medical, arts, commerce, or research evidence, use that document's actual terminology, methodology, case/material, or analytical framework. Never force software advice onto a non-software report, and never make up formulas, APIs, diagnoses, results, sections, or values.
+Before giving a critique, explain the actual project content in a way a student and reviewer can understand. This explanation is the primary output; recommendations are secondary. First show the real content of each source section: its actual points, terminology, workflow, formulae, modules, or claims. Do not replace this with a vague sentence such as "the section describes the project." For a software/code submission, describe only code concepts, architecture, data flow, algorithms, libraries, tests, and technical trade-offs that the uploaded code/report actually evidences. For a finance/report submission, identify only ratios, formulae, financial statements, datasets, periods, or analytical methods that appear in the evidence, explain how they are used, and recommend a relevant chart only when the required values exist. For medical, arts, commerce, or research evidence, use that document's actual terminology, methodology, case/material, or analytical framework. Never force software advice onto a non-software report, and never make up formulas, APIs, diagnoses, results, sections, or values.
+
+For presentations, markers such as [Slide 3] are source locations. Create one projectContent.sections entry for every substantive slide; do not merge slides. Exclude only title or blank slides. For reports, use the actual chapters, headings, or closely related pages. In every section, currentContent must contain 1-6 concise, faithful points from that exact source unit. Use the real nouns, steps, metrics, and terms found there. An evidence reference must identify the exact file and slide/page/heading.
+
+For each section, first explain what is already present and what works. Then identify a distinct gap and give a usable improvement. The improvement must include ready-to-use, project-specific content or implementation steps—not a generic instruction such as "add more details", "add visuals", or "improve the workflow". Suggested content can extend the project using accepted domain practice, but it must never pretend an unprovided feature, result, technology, formula, or dataset already exists. Use [confirm ...] placeholders wherever a new factual claim would need the student's confirmation. Do not repeat the same recommendation, visual, or industry practice in multiple sections.
 
 Every evidence reference must name the uploaded file and the closest supported location. When a PDF text marker such as [Page 12] is present, cite that page number. Otherwise cite an actual heading, slide number, file path, code line/range, or say "location unavailable". Do not invent a page number. Every recommendation must name the specific current section/method/concept it improves and explain why the action fits that project.
 
@@ -708,13 +733,25 @@ Return one valid JSON object only with this exact shape:
     "approach": ["specific method, framework, formula, process, or technical approach used"],
     "scopeAndLimits": ["evidence-supported scope or limitation"],
     "sections": [{
-      "title": "actual heading, module, chapter, or evidence-based topic",
-      "whatItContains": "what this section/module actually contains or demonstrates",
+      "title": "actual slide title, heading, module, chapter, or evidence-based topic",
+      "location": "exact source location, for example Slide 3, Page 12, or a heading",
+      "currentContent": ["1-6 faithful points that this exact section actually contains"],
+      "whatItContains": "one concise explanation of the section's role, using its actual content",
       "whyItMatters": "how it supports the stated project objective",
+      "whatWorks": ["specific thing this exact section already does well"],
+      "gaps": ["specific missing or unclear item in this exact section"],
       "concepts": [{"name": "actual concept, formula, method, or code pattern", "explanation": "how this project uses it"}],
       "evidence": ["filename — page/heading/slide/path with concise reference"],
       "visualSuggestion": {"type": "chart|table|diagram|timeline|screenshot|none", "title": "specific visual title or empty string", "description": "what the visual should show", "dataNeeded": "actual data/assets needed, or empty string"},
-      "improvement": {"title": "specific section improvement or empty string", "recommendation": "project-specific action", "reason": "why it improves this exact section"}
+      "improvement": {
+        "title": "specific section improvement or empty string",
+        "currentGap": "the exact current gap from this section",
+        "industryStandard": "specific relevant practice, pattern, standard, or empty string",
+        "recommendation": "project-specific action",
+        "suggestedContent": ["ready-to-use replacement or additional content; use [confirm ...] where a new fact needs validation"],
+        "implementationSteps": ["specific revision, design, validation, or implementation step"],
+        "reason": "why it improves this exact section"
+      }
     }]
   },
   "evidenceProfile": {
@@ -768,7 +805,7 @@ Return one valid JSON object only with this exact shape:
   }]
 }
 
-Return 2-6 projectContent sections when the evidence has identifiable sections; use fewer when it does not. Return at most 8 strengths, 8 improvements, 8 recommendations, 6 best practices, 6 suggestions, 6 practiceGuidance items, 6 improvementPlan items, 8 findings per area, and 16 code findings. For document-only evidence, hasSourceCode must be false and codeFindings must be empty. The overall score must measure only the quality/completeness of the evidence that was actually reviewed; it must not be an invented score for an unprovided application.`,
+Return 2-8 projectContent sections when the evidence has identifiable sections. For a presentation, return one section for every substantive slide, up to 8 slides. Return at most 8 strengths, 8 improvements, 8 recommendations, 6 best practices, 6 suggestions, 6 practiceGuidance items, 6 improvementPlan items, 8 findings per area, and 16 code findings. For document-only evidence, hasSourceCode must be false and codeFindings must be empty. The overall score must measure only the quality/completeness of the evidence that was actually reviewed; it must not be an invented score for an unprovided application.`,
     {
       title,
       submissionType,
