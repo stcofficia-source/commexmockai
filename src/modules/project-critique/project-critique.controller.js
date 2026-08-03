@@ -30,4 +30,21 @@ function analyze(req, res, next) {
   });
 }
 
-module.exports = { analyze };
+function suggestMetadata(req, res, next) {
+  upload(req, res, async (uploadError) => {
+    if (uploadError) {
+      const message = uploadError.code === 'LIMIT_FILE_SIZE'
+        ? 'Each file must be 25 MB or smaller.'
+        : uploadError.code === 'LIMIT_FILE_COUNT'
+          ? 'Upload at most 10 files.'
+          : 'The project upload is invalid or exceeds a safety limit.';
+      return next(new ValidationError(message));
+    }
+    try {
+      const data = await service.suggestMetadata({ studentId: userId(req), authHeader: req.headers.authorization, payload: req.body, files: req.files || [] });
+      return res.json({ success: true, data });
+    } catch (error) { return next(error); }
+  });
+}
+
+module.exports = { analyze, suggestMetadata };

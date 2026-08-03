@@ -4,12 +4,19 @@ const { ValidationError } = require('../../core/errors');
 const { extractText } = require('../documents/document-parser.service');
 const { scanProjectFiles } = require('../documents/document-security.service');
 const { storeProjectFile } = require('../documents/document-storage.service');
-const { analyzeProject } = require('../analysis/analysis.service');
+const { analyzeProject, suggestProjectMetadata } = require('../analysis/analysis.service');
 const { runBillableAiOperation } = require('../../core/credit-billing.service');
 
 function list(value) {
   if (typeof value === 'string') { try { value = JSON.parse(value); } catch { value = []; } }
   return Array.isArray(value) ? value.filter((item) => typeof item === 'string').slice(0, 12) : [];
+}
+
+function submissionTypes(value) {
+  if (typeof value === 'string') { try { value = JSON.parse(value); } catch { value = []; } }
+  return Array.isArray(value)
+    ? value.filter((item) => item && typeof item === 'object').slice(0, 30)
+    : [];
 }
 
 async function persist(authHeader, payload) {
@@ -81,4 +88,29 @@ async function analyze({ studentId, authHeader, payload, files }) {
   });
 }
 
-module.exports = { analyze };
+async function suggestMetadata({ studentId, authHeader, payload, files }) {
+  if (!studentId) throw new ValidationError('Authentication is required to read project details.');
+  if (!files.length) throw new ValidationError('Upload at least one project file before using AI auto-fill.');
+  const types = submissionTypes(payload.submissionTypes);
+  if (!types.length) throw new ValidationError('Project submission types are unavailable. Please enter the details manually.');
+
+  await scanProjectFiles(files);
+  const extractedFiles = await Promise.all(files.map((file) => extractText(file, 'project')));
+  const billed = await runBillableAiOperation({
+    authorization: authHeader,
+    serviceKey: 'project_critique',
+    reference: 'project-metadata-prefill',
+    operation: () => suggestProjectMetadata({
+      submissionTypes: types,
+      files: files.map((file, index) => ({
+        name: file.originalname,
+        mimeType: file.mimetype,
+        extension: extractedFiles[index].extension,
+        text: extractedFiles[index].text,
+      })),
+    }),
+  });
+  return billed.data;
+}
+
+module.exports = { analyze, suggestMetadata };

@@ -6,7 +6,7 @@ async function analyze(req, res, next) {
     const billed = await runBillableAiOperation({
       authorization: req.headers.authorization,
       serviceKey: 'presentation_coach',
-      operation: () => service.analyze(req.body?.slides),
+      operation: () => service.analyze(req.body?.slides, req.body?.projectContext),
     });
     res.json({ success: true, data: billed.data });
   } catch (error) {

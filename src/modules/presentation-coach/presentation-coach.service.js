@@ -6,6 +6,7 @@ const { captureOpenAiUsage } = require('../../core/ai-usage-cost.service');
 const verdicts = ['excellent', 'good', 'needs_work', 'poor'];
 const priorities = ['high', 'medium', 'low'];
 const categories = ['content', 'structure', 'readability', 'visuals', 'delivery', 'accessibility'];
+const visualTypes = ['diagram', 'chart', 'table', 'timeline', 'screenshot', 'comparison', 'process', 'none', 'other'];
 
 const suggestionSchema = {
   type: 'object',
@@ -38,6 +39,33 @@ const feedbackSchema = {
     overallScore: { type: 'integer', minimum: 0, maximum: 100 },
     verdict: { type: 'string', enum: verdicts },
     audienceTakeaway: { type: 'string' },
+    deckPlan: {
+      type: 'object',
+      additionalProperties: false,
+      required: ['presentationTitle', 'subtitle', 'openingMessage', 'projectNarrative', 'sections', 'missingContext'],
+      properties: {
+        presentationTitle: { type: 'string' },
+        subtitle: { type: 'string' },
+        openingMessage: { type: 'string' },
+        projectNarrative: { type: 'string' },
+        sections: {
+          type: 'array',
+          minItems: 1,
+          maxItems: 12,
+          items: {
+            type: 'object',
+            additionalProperties: false,
+            required: ['sectionTitle', 'purpose', 'slideNumbers'],
+            properties: {
+              sectionTitle: { type: 'string' },
+              purpose: { type: 'string' },
+              slideNumbers: { type: 'array', minItems: 1, maxItems: 50, items: { type: 'integer', minimum: 1 } },
+            },
+          },
+        },
+        missingContext: { type: 'string' },
+      },
+    },
     scores: {
       type: 'object',
       additionalProperties: false,
@@ -83,6 +111,11 @@ const feedbackSchema = {
           'score',
           'verdict',
           'summary',
+          'suggestedTitle',
+          'slidePurpose',
+          'contentPlan',
+          'visualPlan',
+          'speakerNotes',
           'contentDensity',
           'strengths',
           'suggestions',
@@ -93,6 +126,21 @@ const feedbackSchema = {
           score: { type: 'integer', minimum: 0, maximum: 100 },
           verdict: { type: 'string', enum: verdicts },
           summary: { type: 'string' },
+          suggestedTitle: { type: 'string' },
+          slidePurpose: { type: 'string' },
+          contentPlan: { type: 'array', minItems: 1, maxItems: 4, items: { type: 'string' } },
+          visualPlan: {
+            type: 'object',
+            additionalProperties: false,
+            required: ['visualType', 'title', 'description', 'dataNeeded'],
+            properties: {
+              visualType: { type: 'string', enum: visualTypes },
+              title: { type: 'string' },
+              description: { type: 'string' },
+              dataNeeded: { type: 'string' },
+            },
+          },
+          speakerNotes: { type: 'array', minItems: 1, maxItems: 3, items: { type: 'string' } },
           contentDensity: { type: 'string', enum: ['concise', 'balanced', 'dense'] },
           strengths: { type: 'array', items: { type: 'string' }, maxItems: 2 },
           suggestions: { type: 'array', items: suggestionSchema, maxItems: 2 },
@@ -127,6 +175,10 @@ function normalizeSlides(value) {
     tableCount: integer(slide?.tableCount),
     hasSpeakerNotes: Boolean(slide?.hasSpeakerNotes),
   }));
+}
+
+function normalizeProjectContext(value) {
+  return String(value || '').replace(/\u0000/g, '').trim().slice(0, 8000);
 }
 
 function formatSlides(slides) {
@@ -168,12 +220,13 @@ function normalizeFeedback(feedback, sourceSlides) {
   };
 }
 
-async function analyze(slideInput) {
+async function analyze(slideInput, projectContext = '') {
   if (!env.OPENAI_API_KEY) {
     throw new AIServiceError('Presentation AI is unavailable until OPENAI_API_KEY is configured.');
   }
 
   const slides = normalizeSlides(slideInput);
+  const context = normalizeProjectContext(projectContext);
   const client = new OpenAI({
     apiKey: env.OPENAI_API_KEY,
     timeout: env.OPENAI_REQUEST_TIMEOUT_MS,
@@ -201,15 +254,19 @@ async function analyze(slideInput) {
           'The input contains extracted text and structural counts, not rendered pixels.',
           'Never claim to have inspected exact colors, fonts, image quality, alignment, animations, or live delivery.',
           'You may flag a likely visual/readability risk only when the structural signals support it, and state it as a risk.',
-          'Be specific, constructive, concise, and suitable for a student or early-career presenter.',
-          'For each slide use a short summary and return zero to two high-value, actionable suggestions only; do not invent filler feedback.',
-          'For a 50-slide deck, prioritise concise guidance so every supplied slide still receives a useful result.',
+          'The optional project context is supporting information, not proof. Use it to tailor the plan, but do not invent facts not present in the context or slides.',
+          'Create an actionable presentation blueprint, not generic feedback. For every slide provide a stronger suggested title, the audience purpose, specific content bullets, an appropriate visual plan, and concise speaker notes.',
+          'When the deck or project context is sparse, use clearly marked [placeholders] for missing facts instead of fabricating them. Never respond merely with “add more content”.',
+          'A visual plan must name the diagram, chart, table, timeline, screenshot, comparison, or process to show and identify the data or asset needed. Use visualType "none" only when a visual would not help.',
+          'Build deckPlan sections from the supplied slide order, with a better presentation title, subtitle, opening message, narrative, and a clear note about missing project context.',
+          'Be specific, constructive, concise, and suitable for a student or early-career presenter. For each slide use a short summary and return zero to two high-value actionable suggestions only.',
+          'For decks over 12 slides, keep every contentPlan item and speaker note short so every slide still receives a useful result.',
           'Use slide=0 for recommendations that apply to the whole deck.',
         ].join(' '),
       },
       {
         role: 'user',
-        content: `Analyze this ${slides.length}-slide deck and provide the complete structured review.\n\n${formatSlides(slides)}`,
+        content: `Analyze this ${slides.length}-slide deck and provide the complete structured review.\n\nPROJECT CONTEXT:\n${context || '[No project context was supplied. Use placeholders for details the deck does not establish.]'}\n\nSLIDES:\n${formatSlides(slides)}`,
       },
     ],
   });
@@ -229,4 +286,4 @@ async function analyze(slideInput) {
   };
 }
 
-module.exports = { analyze, normalizeSlides };
+module.exports = { analyze, normalizeProjectContext, normalizeSlides };
