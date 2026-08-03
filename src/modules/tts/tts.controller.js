@@ -25,10 +25,13 @@ async function streamTts(req, res) {
   try {
     logger.debug({ text: text.substring(0, 50) }, 'Initiating TTS Stream Proxy...');
 
+    const ttsModel = (env.OPENAI_TTS_MODEL && env.OPENAI_TTS_MODEL.startsWith('tts-')) ? env.OPENAI_TTS_MODEL : 'tts-1';
+    const validVoices = new Set(['alloy', 'echo', 'fable', 'onyx', 'nova', 'shimmer']);
+    const ttsVoice = validVoices.has(env.OPENAI_TTS_VOICE) ? env.OPENAI_TTS_VOICE : 'nova';
+
     const response = await openai.audio.speech.create({
-      model: env.OPENAI_TTS_MODEL,
-      voice: env.OPENAI_TTS_VOICE,
-      instructions: env.OPENAI_TTS_INSTRUCTIONS,
+      model: ttsModel,
+      voice: ttsVoice,
       input: text,
       speed: 0.95,
       response_format: 'mp3',
