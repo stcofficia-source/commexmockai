@@ -3,13 +3,9 @@
  * Provides a low-latency proxy to stream the configured Indian-English
  * interviewer voice directly to the client.
  */
-const OpenAI = require('openai');
 const env = require('../../config/env');
 const logger = require('../../core/logger');
-
-const openai = new OpenAI({
-  apiKey: env.OPENAI_API_KEY,
-});
+const { createSpeech } = require('../../core/openai-client');
 
 /**
  * GET /api/mock/tts/stream?text=...
@@ -29,12 +25,12 @@ async function streamTts(req, res) {
     const validVoices = new Set(['alloy', 'echo', 'fable', 'onyx', 'nova', 'shimmer']);
     const ttsVoice = validVoices.has(env.OPENAI_TTS_VOICE) ? env.OPENAI_TTS_VOICE : 'nova';
 
-    const response = await openai.audio.speech.create({
+    const response = await createSpeech({
       model: ttsModel,
       voice: ttsVoice,
       input: text,
       speed: 0.95,
-      response_format: 'mp3',
+      responseFormat: 'mp3',
     });
 
     // Set headers for audio streaming

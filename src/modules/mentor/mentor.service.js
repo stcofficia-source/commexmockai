@@ -1,4 +1,4 @@
-const OpenAI = require('openai');
+const { createChatCompletion } = require('../../core/openai-client');
 const env = require('../../config/env');
 const logger = require('../../core/logger');
 const { captureOpenAiUsage } = require('../../core/ai-usage-cost.service');
@@ -199,12 +199,11 @@ async function reply({ message, history, token }) {
     context.mockInterviews.length && 'Mock interview history',
   ].filter(Boolean);
 
-  const client = new OpenAI({ apiKey: env.OPENAI_API_KEY });
-  const completion = await client.chat.completions.create({
+  const completion = await createChatCompletion({
     model: env.OPENAI_MENTOR_MODEL,
     temperature: 0.2,
-    max_tokens: env.OPENAI_MENTOR_MAX_OUTPUT_TOKENS,
-    response_format: { type: 'json_object' },
+    maxTokens: env.OPENAI_MENTOR_MAX_OUTPUT_TOKENS,
+    responseFormat: { type: 'json_object' },
     messages: [
       {
         role: 'system',
@@ -214,7 +213,6 @@ async function reply({ message, history, token }) {
       { role: 'user', content: `LMS_CONTEXT:\n${JSON.stringify(context)}\n\nSTUDENT_QUESTION:\n${message}` },
     ],
   });
-  captureOpenAiUsage(completion, env.OPENAI_MENTOR_MODEL);
 
   let output;
   try {

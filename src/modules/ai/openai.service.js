@@ -2,26 +2,17 @@
  * OpenAI AI Service
  * Handles question generation, answer evaluation, and final report using GPT-4o
  */
-const OpenAI = require('openai');
 const env = require('../../config/env');
 const logger = require('../../core/logger');
 const { AIServiceError } = require('../../core/errors');
-const { captureOpenAiUsage } = require('../../core/ai-usage-cost.service');
-
-let openai = null;
+const { getOpenAIClient, createChatCompletion } = require('../../core/openai-client');
 
 /**
  * Initialize OpenAI client
  */
 function initOpenAI() {
-  if (!env.OPENAI_API_KEY) {
-    logger.warn('OPENAI_API_KEY is not configured. AI requests will be rejected until a provider is configured.');
-    return;
-  }
-  openai = new OpenAI({
-    apiKey: env.OPENAI_API_KEY,
-  });
-  logger.info('✅ OpenAI AI initialized (Model: gpt-4o)');
+  getOpenAIClient();
+  logger.info('✅ OpenAI AI client initialized cleanly via central utility');
 }
 
 /**
@@ -308,30 +299,16 @@ Generate a comprehensive interview report. Return ONLY a valid JSON object:
  * Call OpenAI API
  */
 async function callOpenAI(prompt, jsonMode = false, highReasoning = false) {
-  if (!openai) {
-    throw new AIServiceError('AI provider is not configured. Configure STCMOCKAI before starting an interview.');
-  }
-
-  // Speed Optimization: use gpt-4o-mini for fast question generation, gpt-4o for deep evaluation
   const modelId = highReasoning ? 'gpt-4o' : 'gpt-4o-mini';
 
-  try {
-    const response = await openai.chat.completions.create({
-      model: modelId,
-      messages: [{ role: 'user', content: prompt }],
-      response_format: jsonMode ? { type: 'json_object' } : { type: 'text' },
-      temperature: 0.7,
-    });
-    captureOpenAiUsage(response, modelId);
+  const response = await createChatCompletion({
+    model: modelId,
+    messages: [{ role: 'user', content: prompt }],
+    responseFormat: jsonMode ? { type: 'json_object' } : { type: 'text' },
+    temperature: 0.7,
+  });
 
-    return response.choices[0].message.content;
-  } catch (err) {
-    logger.error({
-      err: err.message,
-      status: err.status,
-    }, 'OpenAI API call failed');
-    throw new AIServiceError('AI service temporarily unavailable');
-  }
+  return response.choices[0].message.content;
 }
 
 /**

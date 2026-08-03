@@ -1,21 +1,11 @@
-const OpenAI = require('openai');
 const env = require('../../config/env');
 const logger = require('../../core/logger');
 const { AIServiceError, ValidationError } = require('../../core/errors');
 const { captureOpenAiUsage } = require('../../core/ai-usage-cost.service');
-
-let openAiClient;
+const { getOpenAIClient } = require('../../core/openai-client');
 
 function client() {
-  if (!env.OPENAI_API_KEY) throw new AIServiceError('AI analysis is unavailable until OPENAI_API_KEY is configured in stcmockai.');
-  if (!openAiClient) {
-    openAiClient = new OpenAI({
-      apiKey: env.OPENAI_API_KEY,
-      timeout: env.OPENAI_REQUEST_TIMEOUT_MS,
-      maxRetries: env.OPENAI_MAX_RETRIES,
-    });
-  }
-  return openAiClient;
+  return getOpenAIClient();
 }
 
 function cleanList(value, limit = 8) {

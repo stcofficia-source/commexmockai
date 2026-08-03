@@ -1,4 +1,4 @@
-const OpenAI = require('openai');
+const { createChatCompletion } = require('../../core/openai-client');
 const env = require('../../config/env');
 const { AIServiceError, ValidationError } = require('../../core/errors');
 const { captureOpenAiUsage } = require('../../core/ai-usage-cost.service');
@@ -274,11 +274,11 @@ async function analyze(slideInput, projectContext = '') {
     }
   });
 
-  const completion = await client.chat.completions.create({
+  const completion = await createChatCompletion({
     model: env.OPENAI_PRESENTATION_MODEL,
     temperature: 0.15,
-    max_completion_tokens: env.OPENAI_PRESENTATION_MAX_OUTPUT_TOKENS,
-    response_format: {
+    maxTokens: env.OPENAI_PRESENTATION_MAX_OUTPUT_TOKENS,
+    responseFormat: {
       type: 'json_schema',
       json_schema: {
         name: 'presentation_coach_feedback',
@@ -312,7 +312,6 @@ async function analyze(slideInput, projectContext = '') {
       },
     ],
   });
-  captureOpenAiUsage(completion, env.OPENAI_PRESENTATION_MODEL);
 
   let feedback;
   try {

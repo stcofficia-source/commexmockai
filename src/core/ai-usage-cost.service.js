@@ -2,6 +2,7 @@ const fs = require('fs');
 const path = require('path');
 const { AsyncLocalStorage } = require('async_hooks');
 const env = require('../config/env');
+const { getUsdInrExchangeRate } = require('./exchange-rate.service');
 
 const usageStorage = new AsyncLocalStorage();
 let pricingCatalog;
@@ -88,10 +89,19 @@ async function collectAiUsage(operation) {
 
 function convertCurrency(amount, sourceCurrency, targetCurrency, catalog) {
   if (sourceCurrency === targetCurrency) return amount;
+
+  if (sourceCurrency === 'USD' && targetCurrency === 'INR') {
+    const configuredFallback = finiteNonNegative(catalog.exchangeRates?.USD_INR) || 96.1856;
+    const liveRate = getUsdInrExchangeRate(configuredFallback);
+    return amount * liveRate;
+  }
+
   const directRate = finiteNonNegative(catalog.exchangeRates?.[`${sourceCurrency}_${targetCurrency}`]);
   if (directRate > 0) return amount * directRate;
+
   const inverseRate = finiteNonNegative(catalog.exchangeRates?.[`${targetCurrency}_${sourceCurrency}`]);
   if (inverseRate > 0) return amount / inverseRate;
+
   throw operationalError(`No ${sourceCurrency}/${targetCurrency} exchange rate is configured for AI billing.`);
 }
 
@@ -106,11 +116,13 @@ function priceAiUsage(usage) {
   const cachedPromptTokens = Math.min(promptTokens, finiteNonNegative(usage.cachedPromptTokens));
   const uncachedPromptTokens = promptTokens - cachedPromptTokens;
   const completionTokens = finiteNonNegative(usage.completionTokens);
+
   const providerCost = (
     (uncachedPromptTokens * finiteNonNegative(modelRate.inputPerMillion))
     + (cachedPromptTokens * finiteNonNegative(modelRate.cachedInputPerMillion))
     + (completionTokens * finiteNonNegative(modelRate.outputPerMillion))
   ) / 1_000_000;
+
   const billingCost = convertCurrency(
     providerCost,
     String(modelRate.currency || catalog.billingCurrency).toUpperCase(),

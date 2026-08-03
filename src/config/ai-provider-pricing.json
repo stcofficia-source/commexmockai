@@ -1,6 +1,6 @@
 {
-  "version": "2026-07-28",
-  "effectiveAt": "2026-07-28T00:00:00+05:30",
+  "version": "2026-08-03",
+  "effectiveAt": "2026-08-03T00:00:00+05:30",
   "billingCurrency": "INR",
   "exchangeRates": {
     "USD_INR": 96.1856
@@ -18,7 +18,13 @@
           "currency": "USD",
           "inputPerMillion": 2.5,
           "cachedInputPerMillion": 1.25,
-          "outputPerMillion": 10
+          "outputPerMillion": 10.0
+        },
+        "tts-1": {
+          "currency": "USD",
+          "inputPerMillion": 15.0,
+          "cachedInputPerMillion": 15.0,
+          "outputPerMillion": 0.0
         }
       }
     }
