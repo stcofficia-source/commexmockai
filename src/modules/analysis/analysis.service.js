@@ -46,6 +46,88 @@ function cleanRecords(value, mapper, limit = 8) {
     .slice(0, limit);
 }
 
+function cleanProjectConcepts(value, limit = 4) {
+  const source = Array.isArray(value) ? value : [];
+  return source
+    .map((item) => {
+      if (typeof item === 'string') {
+        const name = text(item).slice(0, 180);
+        return name ? { name, explanation: '' } : null;
+      }
+      if (!item || typeof item !== 'object') return null;
+      const name = text(item.name || item.concept || item.method).slice(0, 180);
+      const explanation = text(item.explanation || item.howUsed || item.description).slice(0, 700);
+      return name || explanation ? { name, explanation } : null;
+    })
+    .filter(Boolean)
+    .slice(0, limit);
+}
+
+function cleanProjectContent(value) {
+  const source = value && typeof value === 'object' ? value : {};
+  return {
+    projectTitle: text(source.projectTitle).slice(0, 240),
+    projectType: text(source.projectType).slice(0, 180),
+    overview: text(source.overview).slice(0, 1800),
+    objective: text(source.objective).slice(0, 900),
+    approach: cleanList(source.approach, 8),
+    scopeAndLimits: cleanList(source.scopeAndLimits, 6),
+    sections: cleanRecords(source.sections, (item) => {
+      const title = text(item.title).slice(0, 180);
+      const whatItContains = text(item.whatItContains || item.content).slice(0, 1400);
+      const whyItMatters = text(item.whyItMatters || item.purpose).slice(0, 800);
+      const concepts = cleanProjectConcepts(item.concepts, 4);
+      const evidence = cleanList(item.evidence, 5);
+      const rawVisual = item.visualSuggestion && typeof item.visualSuggestion === 'object' ? item.visualSuggestion : {};
+      const visualSuggestion = {
+        type: text(rawVisual.type).slice(0, 80),
+        title: text(rawVisual.title).slice(0, 180),
+        description: text(rawVisual.description).slice(0, 800),
+        dataNeeded: text(rawVisual.dataNeeded).slice(0, 500),
+      };
+      const rawImprovement = item.improvement && typeof item.improvement === 'object' ? item.improvement : {};
+      const improvement = {
+        title: text(rawImprovement.title).slice(0, 180),
+        recommendation: text(rawImprovement.recommendation || rawImprovement.action).slice(0, 900),
+        reason: text(rawImprovement.reason).slice(0, 700),
+      };
+      if (!title && !whatItContains) return null;
+      return {
+        title,
+        whatItContains,
+        whyItMatters,
+        concepts,
+        evidence,
+        visualSuggestion,
+        improvement,
+      };
+    }, 8),
+  };
+}
+
+function cleanPracticeGuidance(value) {
+  return cleanRecords(value, (item) => {
+    const title = text(item.title).slice(0, 180);
+    const basedOn = text(item.basedOn).slice(0, 700);
+    const recommendation = text(item.recommendation || item.action).slice(0, 800);
+    const whyItFits = text(item.whyItFits || item.rationale).slice(0, 700);
+    const nextStep = text(item.nextStep).slice(0, 600);
+    if (!title && !recommendation) return null;
+    return { title, basedOn, recommendation, whyItFits, nextStep };
+  }, 8);
+}
+
+function cleanImprovementPlan(value) {
+  return cleanRecords(value, (item) => {
+    const title = text(item.title || item.area).slice(0, 180);
+    const currentEvidence = text(item.currentEvidence || item.currentState).slice(0, 700);
+    const action = text(item.action || item.recommendation).slice(0, 800);
+    const expectedOutcome = text(item.expectedOutcome || item.benefit).slice(0, 700);
+    if (!title && !action) return null;
+    return { title, currentEvidence, action, expectedOutcome };
+  }, 8);
+}
+
 function cleanGrammarIssues(value) {
   return cleanRecords(value, (item) => {
     const original = text(item.original || item.text).slice(0, 280);
@@ -605,7 +687,11 @@ async function analyzeProject({ title, submissionType, technologies, description
 
 The uploaded file contents are authoritative evidence. The project title, submission type, technologies, description, and reference are user-provided claims only: use them as context, but never treat them as proof of code, a working application, UI, performance, security controls, or any implementation detail. If metadata conflicts with the files, state that the assessment follows the files.
 
-First infer what the supplied evidence actually is (for example, a written report, source code, design artifact, data analysis, or a mixture). Review only claims that can be supported by that evidence. Never score code quality without actual source code. Never score functionality without implementation, executable behavior, tests, or comparable direct evidence. Never score UI/UX without UI/design evidence. Never score performance without measurements, profiling, tests, or comparable evidence. Never score security without code, configuration, architecture, threat-model, or security-test evidence. A readable report may be assessed as documentation or report evidence, but it must not be represented as application code.
+First infer what the supplied evidence actually is (for example, a written report, source code, design artifact, data analysis, or a mixture) and its domain (for example software, finance, medical, arts, research, commerce, or another evidenced domain). Review only claims that can be supported by that evidence. Never score code quality without actual source code. Never score functionality without implementation, executable behavior, tests, or comparable direct evidence. Never score UI/UX without UI/design evidence. Never score performance without measurements, profiling, tests, or comparable evidence. Never score security without code, configuration, architecture, threat-model, or security-test evidence. A readable report may be assessed as documentation or report evidence, but it must not be represented as application code.
+
+Before giving a critique, explain the actual project content in a way a student and reviewer can understand: the objective, approach, source sections/topics, concepts or methods used, and what each section demonstrates. This explanation is the primary output; recommendations are secondary. For a software/code submission, describe only code concepts, architecture, data flow, algorithms, libraries, tests, and technical trade-offs that the uploaded code/report actually evidences. For a finance/report submission, identify only ratios, formulae, financial statements, datasets, periods, or analytical methods that appear in the evidence, explain how they are used, and recommend a relevant chart only when the required values exist. For medical, arts, commerce, or research evidence, use that document's actual terminology, methodology, case/material, or analytical framework. Never force software advice onto a non-software report, and never make up formulas, APIs, diagnoses, results, sections, or values.
+
+Every evidence reference must name the uploaded file and the closest supported location. When a PDF text marker such as [Page 12] is present, cite that page number. Otherwise cite an actual heading, slide number, file path, code line/range, or say "location unavailable". Do not invent a page number. Every recommendation must name the specific current section/method/concept it improves and explain why the action fits that project.
 
 Analyze only these selected feedback keys: ${selectedFocus.join(', ')}. For every selected key, use the evidence profile to either assess it or mark it unassessed with an evidence-specific reason. Do not return unselected score categories. Every strength, finding, improvement, recommendation, best practice, and suggestion must be grounded in a concrete topic, metric, method, limitation, section, or artifact found in the uploaded evidence. Omit any item that cannot be grounded. Avoid generic template advice about building an app, dashboards, industry experts, publication, peer review, or future work unless the uploaded evidence or user-provided goal directly supports it.
 
@@ -614,6 +700,23 @@ Return one valid JSON object only with this exact shape:
   "score": 0-100,
   "title": "short evidence-based verdict",
   "summary": "2-4 sentence executive summary including evidence limitations",
+  "projectContent": {
+    "projectTitle": "evidence-based project/report title or empty string",
+    "projectType": "specific evidence-based project/report type",
+    "overview": "what this project actually studies, builds, designs, or presents",
+    "objective": "the evidence-supported objective or empty string",
+    "approach": ["specific method, framework, formula, process, or technical approach used"],
+    "scopeAndLimits": ["evidence-supported scope or limitation"],
+    "sections": [{
+      "title": "actual heading, module, chapter, or evidence-based topic",
+      "whatItContains": "what this section/module actually contains or demonstrates",
+      "whyItMatters": "how it supports the stated project objective",
+      "concepts": [{"name": "actual concept, formula, method, or code pattern", "explanation": "how this project uses it"}],
+      "evidence": ["filename — page/heading/slide/path with concise reference"],
+      "visualSuggestion": {"type": "chart|table|diagram|timeline|screenshot|none", "title": "specific visual title or empty string", "description": "what the visual should show", "dataNeeded": "actual data/assets needed, or empty string"},
+      "improvement": {"title": "specific section improvement or empty string", "recommendation": "project-specific action", "reason": "why it improves this exact section"}
+    }]
+  },
   "evidenceProfile": {
     "artifactType": "short label inferred only from the uploaded evidence",
     "reviewBasis": "what the uploaded evidence allows the reviewer to verify",
@@ -631,6 +734,19 @@ Return one valid JSON object only with this exact shape:
   "recommendations": ["concrete next action"],
   "bestPractices": ["relevant best practice"],
   "suggestions": ["short delivery suggestion"],
+  "practiceGuidance": [{
+    "title": "specific practice, concept, or technique",
+    "basedOn": "current project evidence that makes it relevant",
+    "recommendation": "what to use, clarify, validate, or improve",
+    "whyItFits": "why this fits the project's domain and objective",
+    "nextStep": "concrete next step"
+  }],
+  "improvementPlan": [{
+    "title": "specific evidence-based improvement area",
+    "currentEvidence": "what the uploaded project currently shows",
+    "action": "specific improvement action",
+    "expectedOutcome": "what that action would make clearer, safer, or more useful"
+  }],
   "analysisAreas": [{
     "key": "one selected feedback key",
     "label": "human label",
@@ -652,7 +768,7 @@ Return one valid JSON object only with this exact shape:
   }]
 }
 
-Return at most 8 strengths, 10 improvements, 10 recommendations, 8 best practices, 8 suggestions, 10 findings per area, and 16 code findings. For document-only evidence, hasSourceCode must be false and codeFindings must be empty. The overall score must measure only the quality/completeness of the evidence that was actually reviewed; it must not be an invented score for an unprovided application.`,
+Return 2-6 projectContent sections when the evidence has identifiable sections; use fewer when it does not. Return at most 8 strengths, 8 improvements, 8 recommendations, 6 best practices, 6 suggestions, 6 practiceGuidance items, 6 improvementPlan items, 8 findings per area, and 16 code findings. For document-only evidence, hasSourceCode must be false and codeFindings must be empty. The overall score must measure only the quality/completeness of the evidence that was actually reviewed; it must not be an invented score for an unprovided application.`,
     {
       title,
       submissionType,
@@ -715,6 +831,9 @@ Return at most 8 strengths, 10 improvements, 10 recommendations, 8 best practice
       bestPractices: cleanList(item.bestPractices, 8),
     };
   }, 12);
+  const projectContent = cleanProjectContent(result.projectContent);
+  const practiceGuidance = cleanPracticeGuidance(result.practiceGuidance);
+  const improvementPlan = cleanImprovementPlan(result.improvementPlan);
   const codeFindings = evidenceProfile.hasSourceCode ? cleanRecords(result.codeFindings, (item) => {
     const issue = text(item.issue).slice(0, 700);
     if (!issue) return null;
@@ -738,6 +857,9 @@ Return at most 8 strengths, 10 improvements, 10 recommendations, 8 best practice
     recommendations: cleanList(result.recommendations, 10),
     bestPractices: cleanList(result.bestPractices, 8),
     suggestions: cleanList(result.suggestions, 8),
+    projectContent,
+    practiceGuidance,
+    improvementPlan,
     analysisAreas,
     codeFindings,
     evidenceProfile,

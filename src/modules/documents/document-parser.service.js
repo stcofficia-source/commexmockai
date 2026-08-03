@@ -111,6 +111,22 @@ function legacyPowerPointText(buffer) {
   return text(unique.join('\n'));
 }
 
+async function pdfTextWithPageMarkers(buffer) {
+  let pageNumber = 0;
+  const parsed = await pdfParse(buffer, {
+    pagerender: async (page) => {
+      pageNumber += 1;
+      const content = await page.getTextContent({ normalizeWhitespace: true, disableCombineTextItems: false });
+      const pageText = content.items
+        .map((item) => String(item.str || '').trim())
+        .filter(Boolean)
+        .join(' ');
+      return `\n[Page ${pageNumber}]\n${pageText}`;
+    },
+  });
+  return text(parsed.text);
+}
+
 async function extractText(file, kind) {
   const extension = await validate(file, kind);
   if (!['pdf', 'doc', 'docx', 'ppt', 'pptx', 'zip'].includes(extension)) {
@@ -118,8 +134,7 @@ async function extractText(file, kind) {
   }
   try {
     if (extension === 'pdf') {
-      const parsed = await pdfParse(file.buffer);
-      return { extension, text: text(parsed.text) };
+      return { extension, text: await pdfTextWithPageMarkers(file.buffer) };
     }
     if (extension === 'docx') {
       const parsed = await mammoth.extractRawText({ buffer: file.buffer });
