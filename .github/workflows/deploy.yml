@@ -1,47 +1,68 @@
-name: Deploy to VPS
+name: Deploy Express AI Backend to Production VPS
 
 on:
   push:
     branches:
       - main
+      - master
 
 jobs:
   deploy:
-    name: Deploy to VPS
+    name: Build & Deploy Express AI Backend
     runs-on: ubuntu-latest
 
     steps:
-      - name: Check SSH port reachability
+      - name: Verify SSH Port Accessibility
         env:
           DEPLOY_HOST: ${{ secrets.VPS_IP }}
-          DEPLOY_PORT: ${{ secrets.VPS_PORT }}
+          DEPLOY_PORT: ${{ secrets.VPS_PORT || '22' }}
         run: |
           if [ -z "${DEPLOY_HOST}" ]; then
-            echo "::error::VPS_IP secret is empty. Add the server IP/domain in GitHub repository secrets."
+            echo "::error::VPS_IP secret is required in GitHub Repository Secrets."
             exit 1
           fi
-
-          DEPLOY_PORT="${DEPLOY_PORT:-22}"
-          echo "Checking SSH port reachability..."
-          timeout 20 bash -c "</dev/tcp/${DEPLOY_HOST}/${DEPLOY_PORT}" || {
-            echo "::error::Cannot reach the VPS SSH port from GitHub Actions. Check VPS_IP, VPS_PORT, sshd status, server firewall, cloud security group, and GitHub Actions IP access."
+          echo "Checking SSH connectivity to ${DEPLOY_HOST}:${DEPLOY_PORT}..."
+          timeout 15 bash -c "</dev/tcp/${DEPLOY_HOST}/${DEPLOY_PORT}" || {
+            echo "::error::SSH port ${DEPLOY_PORT} on ${DEPLOY_HOST} is unreachable."
             exit 1
           }
 
-      - name: Deploy via SSH
+      - name: Execute Server Deployment Script via SSH
         uses: appleboy/ssh-action@v1.0.0
         with:
           host: ${{ secrets.VPS_IP }}
           username: ${{ secrets.VPS_USER }}
           key: ${{ secrets.VPS_SSH_KEY }}
           port: ${{ secrets.VPS_PORT || '22' }}
-          timeout: 60s
-          command_timeout: 15m
+          timeout: 90s
+          command_timeout: 20m
           script_stop: true
           script: |
-            cd /var/www/commexmockai
-            git pull origin main
-            npm install --omit=dev
-            pm2 reload commexmockai --update-env
+            set -e
+            APP_DIR="/var/www/commexmockai"
+            echo "🚀 Navigating to application directory: ${APP_DIR}"
+            cd "${APP_DIR}"
+
+            echo "📥 Fetching latest commits from Git..."
+            git fetch --all
+            git reset --hard origin/main || git reset --hard origin/master
+
+            echo "📦 Checking and installing npm dependencies..."
+            if [ -f "package-lock.json" ]; then
+              npm ci --prefer-offline --no-audit || npm install --legacy-peer-deps --no-audit
+            else
+              npm install --legacy-peer-deps --no-audit
+            fi
+
+            echo "🔍 Running Node.js syntax verification..."
+            find src -name "*.js" -exec node --check {} +
+
+            echo "🔄 Reloading PM2 backend process cleanly..."
+            pm2 reload commexmockai --update-env || pm2 start src/server.js --name "commexmockai" --update-env
+            pm2 save
+
+            echo "🏥 Running production health check..."
+            sleep 3
             curl --fail --silent --show-error http://127.0.0.1:3500/health
-            echo "Deployed successfully!"
+
+            echo "✅ Express AI Backend deployed and running smoothly!"
