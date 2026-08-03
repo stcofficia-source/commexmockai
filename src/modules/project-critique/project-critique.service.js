@@ -34,8 +34,9 @@ async function analyze({ studentId, authHeader, payload, files }) {
     throw new ValidationError('Upload at least one project file or provide a project description.');
   }
   const securityChecks = files.length ? await scanProjectFiles(files) : [];
+  const extractedFiles = files.length ? await Promise.all(files.map((file) => extractText(file, 'project'))) : [];
   const parsedFiles = files.length ? await Promise.all(files.map(async (file, index) => {
-    const parsed = await extractText(file, 'project');
+    const parsed = extractedFiles[index];
     const stored = await storeProjectFile(studentId, file);
     return {
       ...securityChecks[index],

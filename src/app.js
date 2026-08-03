@@ -118,8 +118,13 @@ app.use((req, res) => {
 
 // Error handler
 app.use((err, req, res, next) => {
-  logger.error({ err }, 'Unhandled error');
-  res.status(err.statusCode || 500).json({
+  const statusCode = err.statusCode || 500;
+  if (err.isOperational && statusCode < 500) {
+    logger.warn({ err, statusCode }, 'Request rejected');
+  } else {
+    logger.error({ err, statusCode }, 'Unhandled error');
+  }
+  res.status(statusCode).json({
     success: false,
     message: err.isOperational ? err.message : 'Internal server error',
   });

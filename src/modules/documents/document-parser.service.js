@@ -33,6 +33,18 @@ function text(value) {
   return String(value || '').replace(/\s+/g, ' ').trim().slice(0, TEXT_LIMIT);
 }
 
+function unreadableDocumentError(extension) {
+  const labels = {
+    pdf: 'PDF',
+    doc: 'Word',
+    docx: 'Word',
+    ppt: 'PowerPoint',
+    pptx: 'PowerPoint',
+    zip: 'ZIP archive',
+  };
+  return new ValidationError(`The ${labels[extension] || 'uploaded'} file is damaged or cannot be read. Export or download a fresh copy and upload it again.`);
+}
+
 function xmlText(value) {
   return text(String(value || '')
     .replace(/<a:br\s*\/?>/gi, ' ')
@@ -104,29 +116,34 @@ async function extractText(file, kind) {
   if (!['pdf', 'doc', 'docx', 'ppt', 'pptx', 'zip'].includes(extension)) {
     return { extension, text: text(file.buffer.toString('utf8').replace(/\u0000/g, '')) };
   }
-  if (extension === 'pdf') {
-    const parsed = await pdfParse(file.buffer);
-    return { extension, text: text(parsed.text) };
+  try {
+    if (extension === 'pdf') {
+      const parsed = await pdfParse(file.buffer);
+      return { extension, text: text(parsed.text) };
+    }
+    if (extension === 'docx') {
+      const parsed = await mammoth.extractRawText({ buffer: file.buffer });
+      return { extension, text: text(parsed.value) };
+    }
+    if (extension === 'doc') {
+      const extracted = await new WordExtractor().extract(file.buffer);
+      return { extension, text: text([extracted.getHeaders(), extracted.getBody(), extracted.getFootnotes(), extracted.getEndnotes()].filter(Boolean).join('\n')) };
+    }
+    if (extension === 'pptx') {
+      const archive = new AdmZip(file.buffer);
+      const slides = archive.getEntries()
+        .filter((entry) => /^ppt\/slides\/slide\d+\.xml$/i.test(entry.entryName))
+        .sort((left, right) => left.entryName.localeCompare(right.entryName, undefined, { numeric: true }))
+        .map((entry) => xmlText(entry.getData().toString('utf8')))
+        .filter(Boolean);
+      return { extension, text: text(slides.join('\n')) };
+    }
+    if (extension === 'ppt') return { extension, text: legacyPowerPointText(file.buffer) };
+    if (extension === 'zip') return { extension, text: archiveText(file.buffer) };
+  } catch (error) {
+    if (error instanceof ValidationError) throw error;
+    throw unreadableDocumentError(extension);
   }
-  if (extension === 'docx') {
-    const parsed = await mammoth.extractRawText({ buffer: file.buffer });
-    return { extension, text: text(parsed.value) };
-  }
-  if (extension === 'doc') {
-    const extracted = await new WordExtractor().extract(file.buffer);
-    return { extension, text: text([extracted.getHeaders(), extracted.getBody(), extracted.getFootnotes(), extracted.getEndnotes()].filter(Boolean).join('\n')) };
-  }
-  if (extension === 'pptx') {
-    const archive = new AdmZip(file.buffer);
-    const slides = archive.getEntries()
-      .filter((entry) => /^ppt\/slides\/slide\d+\.xml$/i.test(entry.entryName))
-      .sort((left, right) => left.entryName.localeCompare(right.entryName, undefined, { numeric: true }))
-      .map((entry) => xmlText(entry.getData().toString('utf8')))
-      .filter(Boolean);
-    return { extension, text: text(slides.join('\n')) };
-  }
-  if (extension === 'ppt') return { extension, text: legacyPowerPointText(file.buffer) };
-  if (extension === 'zip') return { extension, text: archiveText(file.buffer) };
   throw new ValidationError('This file format is not supported.');
 }
 
