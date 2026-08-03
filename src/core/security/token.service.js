@@ -3,10 +3,10 @@
  * Industry standard JWT verification service
  */
 const jwt = require('jsonwebtoken');
-const axios = require('axios');
 const env = require('../../config/env');
 const { AuthenticationError } = require('../errors');
 const logger = require('../logger');
+const phpApiClient = require('../php-api-client');
 
 class TokenService {
  
@@ -23,10 +23,10 @@ class TokenService {
     }
  
     try {
-      const url = `${env.STC_API_BASE_URL}/v1/auth/verify-token`;
+      const url = '/v1/auth/verify-token';
       logger.debug({ url }, 'Attempting remote token verification');
 
-      const response = await axios.get(url, {
+      const response = await phpApiClient.get(url, {
         headers: { Authorization: `Bearer ${token}` }
       });
 
@@ -34,20 +34,16 @@ class TokenService {
       if (apiResponse.success && apiResponse.data) {
         return apiResponse.data;
       }
+      throw new AuthenticationError('Session could not be verified');
     } catch (err) {
+      if (err instanceof AuthenticationError) throw err;
       if (err.response?.status === 401) {
         logger.warn('Remote API returned 401: Token invalid/expired');
         throw new AuthenticationError('Session expired');
       }
+      logger.error({ err: err.message }, 'Remote token verification failed');
+      throw new AuthenticationError('Authentication service unavailable');
     }
-
-    // Fallback: decode JWT payload if format is valid
-    const decoded = jwt.decode(token);
-    if (decoded) {
-      return decoded;
-    }
-
-    throw new AuthenticationError('Authentication service unavailable');
   }
  
   generateInternalToken(payload) {

@@ -9,13 +9,20 @@ const logger = require('./core/logger');
 const { version } = require('../package.json');
 
 const app = express();
+const corsOrigins = String(env.CORS_ORIGIN || '')
+  .split(',')
+  .map((origin) => origin.trim())
+  .filter(Boolean);
 
 // Security middleware
 app.use(helmet());
 app.use(cors({
-  origin: env.CORS_ORIGIN,
+  origin(origin, callback) {
+    const allowed = !origin || corsOrigins.includes('*') || corsOrigins.includes(origin);
+    callback(null, allowed);
+  },
   methods: ['GET', 'POST', 'PUT', 'DELETE'],
-  allowedHeaders: ['Content-Type', 'Authorization'],
+  allowedHeaders: ['Content-Type', 'Authorization', 'X-Interview-Client'],
 }));
 
 // Body parsing

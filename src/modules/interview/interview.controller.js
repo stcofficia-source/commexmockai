@@ -3,10 +3,10 @@
  * Handles HTTP requests for interview meta data
  */
 const interviewService = require("./interview.service");
-const axios = require("axios");
 const env = require("../../config/env");
 const multer = require("multer");
 const logger = require("../../core/logger");
+const apiClient = require("../../core/php-api-client");
 const sessionManager = require("../../core/session");
 const { DEPARTMENTS, JOB_ROLES } = require("./interview.data");
 const openaiService = require("../ai/openai.service");
@@ -48,7 +48,7 @@ const getAssemblyToken = async (req, res, next) => {
         message: "Live transcription is not configured on this server.",
       });
     }
-    const response = await axios.get(
+    const response = await apiClient.get(
       "https://streaming.assemblyai.com/v3/token?expires_in_seconds=60&max_session_duration_seconds=900",
       {
         headers: { authorization: env.ASSEMBLYAI_API_KEY },

@@ -2,10 +2,10 @@
  * Speech-to-Text Service
  * Uses AssemblyAI for transcription with fallback
  */
-const axios = require('axios');
 const env = require('../../config/env');
 const logger = require('../../core/logger');
 const { AppError } = require('../../core/errors');
+const apiClient = require('../../core/php-api-client');
 
 const ASSEMBLYAI_BASE = 'https://api.assemblyai.com/v2';
 const DEFAULT_SPEECH_MODELS = ['universal-2'];
@@ -38,7 +38,7 @@ async function transcribeAudio(audioBuffer, contentType = 'audio/webm') {
 
   try {
     // Step 1: Upload audio
-    const uploadRes = await axios.post(`${ASSEMBLYAI_BASE}/upload`, audioBuffer, {
+    const uploadRes = await apiClient.post(`${ASSEMBLYAI_BASE}/upload`, audioBuffer, {
       headers: {
         authorization: env.ASSEMBLYAI_API_KEY,
         'content-type': 'application/octet-stream',
@@ -57,7 +57,7 @@ async function transcribeAudio(audioBuffer, contentType = 'audio/webm') {
       }, '📥 REST: High-fidelity audio buffer received');
     }
  
-    const transcriptRes = await axios.post(
+    const transcriptRes = await apiClient.post(
       `${ASSEMBLYAI_BASE}/transcript`,
       {
         audio_url: audioUrl,
@@ -110,7 +110,7 @@ async function transcribeAudio(audioBuffer, contentType = 'audio/webm') {
 async function pollTranscription(transcriptId, maxAttempts = 60) {
   for (let i = 0; i < maxAttempts; i++) {
     try {
-      const res = await axios.get(`${ASSEMBLYAI_BASE}/transcript/${transcriptId}`, {
+      const res = await apiClient.get(`${ASSEMBLYAI_BASE}/transcript/${transcriptId}`, {
         headers: { authorization: env.ASSEMBLYAI_API_KEY },
       });
 

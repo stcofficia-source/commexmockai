@@ -42,5 +42,6 @@ jobs:
             cd /var/www/commexmockai
             git pull origin main
             npm install --omit=dev
-            pm2 reload commex-api --update-env
+            pm2 reload commexmockai --update-env
+            curl --fail --silent --show-error http://127.0.0.1:3500/health
             echo "Deployed successfully!"

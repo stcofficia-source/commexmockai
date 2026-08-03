@@ -9,7 +9,6 @@ const sttService = require('../stt/stt.service');
 const ttsService = require('../tts/tts.service');
 const logger = require('../../core/logger');
 const phpApiClient = require('../../core/php-api-client');
-const axios = require('axios');
 const env = require('../../config/env');
 const { DEPARTMENTS, JOB_ROLES } = require('./interview.data');
 const { AppError, SessionError } = require('../../core/errors');
