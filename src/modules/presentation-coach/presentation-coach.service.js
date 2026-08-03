@@ -129,7 +129,7 @@ const feedbackSchema = {
           summary: { type: 'string' },
           suggestedTitle: { type: 'string' },
           slidePurpose: { type: 'string' },
-          contentPlan: { type: 'array', minItems: 1, maxItems: 4, items: { type: 'string' } },
+          contentPlan: { type: 'array', minItems: 1, maxItems: 6, items: { type: 'string' } },
           visualPlan: {
             type: 'object',
             additionalProperties: false,
@@ -169,6 +169,7 @@ function normalizeSlides(value) {
     number: Math.max(1, integer(slide?.number) || index + 1),
     title: String(slide?.title || `Slide ${index + 1}`).trim().slice(0, 240),
     text: String(slide?.text || '').trim().slice(0, 4000),
+    imageUrl: String(slide?.imageUrl || '').trim(),
     wordCount: integer(slide?.wordCount),
     textBlockCount: integer(slide?.textBlockCount),
     imageCount: integer(slide?.imageCount),
@@ -187,12 +188,14 @@ function formatSlides(slides) {
   return slides.map((slide) => {
     const safeText = slide.text.slice(0, Math.max(0, remaining));
     remaining -= safeText.length;
+    const hasVisuals = slide.imageCount > 0 || slide.textBlockCount > 0 || slide.imageUrl || /Visual Graphic/i.test(safeText);
+    const displayText = safeText || (hasVisuals ? '[Visual Graphic Slide: Slide contains graphics, visual design assets, and layout elements.]' : '[No extractable text]');
     return [
       `SLIDE ${slide.number}: ${slide.title}`,
       `Signals: ${slide.wordCount} words; ${slide.textBlockCount} text blocks; `
         + `${slide.imageCount} images; ${slide.chartCount} charts; ${slide.tableCount} tables; `
         + `speaker notes ${slide.hasSpeakerNotes ? 'present' : 'not detected'}.`,
-      `Extracted text: ${safeText || '[No extractable text]'}`,
+      `Extracted content: ${displayText}`,
     ].join('\n');
   }).join('\n\n');
 }
@@ -215,7 +218,10 @@ function normalizeFeedback(feedback, sourceSlides) {
       return {
         ...reviewed,
         number: source.number,
-        title: String(reviewed.title || source.title).trim() || source.title,
+        title: (() => {
+          const title = String(reviewed.title || '').trim();
+          return title && !/^\d+$/.test(title) ? title : source.title;
+        })(),
       };
     }),
   };
@@ -233,6 +239,27 @@ async function analyze(slideInput, projectContext = '') {
     timeout: env.OPENAI_REQUEST_TIMEOUT_MS,
     maxRetries: env.OPENAI_MAX_RETRIES,
   });
+
+  const userMessageContent = [
+    {
+      type: 'text',
+      text: `Analyze this ${slides.length}-slide deck and provide the complete structured review.\n\nPROJECT CONTEXT:\n${context || '[No project context was supplied. Use placeholders for details the deck does not establish.]'}\n\nSLIDES:\n${formatSlides(slides)}`,
+    },
+  ];
+
+  // Include slide visual images for OpenAI GPT-4o Vision OCR & Visual layout analysis
+  slides.forEach((slide) => {
+    if (slide.imageUrl && slide.imageUrl.startsWith('data:image/')) {
+      userMessageContent.push({
+        type: 'image_url',
+        image_url: {
+          url: slide.imageUrl,
+          detail: 'low',
+        },
+      });
+    }
+  });
+
   const completion = await client.chat.completions.create({
     model: env.OPENAI_PRESENTATION_MODEL,
     temperature: 0.15,
@@ -249,26 +276,25 @@ async function analyze(slideInput, projectContext = '') {
       {
         role: 'system',
         content: [
-          'You are COMMEX AI, an expert presentation coach.',
+          'You are COMMEX AI, an expert presentation coach with vision capability and professional technical documentation expertise.',
           'Review every supplied slide and return one slides[] entry for every input slide, in the same order.',
-          'Judge clarity, story, structure, audience value, readability risk, delivery readiness, and accessibility.',
-          'The input contains extracted text and structural counts, not rendered pixels.',
-          'Never claim to have inspected exact colors, fonts, image quality, alignment, animations, or live delivery.',
-          'You may flag a likely visual/readability risk only when the structural signals support it, and state it as a risk.',
-          'The optional project context is supporting information, not proof. Use it to tailor the plan, but do not invent facts not present in the context or slides.',
-          'Create an actionable, project-related presentation blueprint, not generic feedback. For every slide provide a stronger suggested title, the audience purpose, specific content bullets, an appropriate visual plan, and concise speaker notes.',
-          'All returned text must be clear, grammatical, professional English. Write concrete content the student can use, not vague instructions such as “add content”, “provide context”, or “use visuals”.',
-          'Ground every contentPlan item, summary, strength, and recommendation in the slide text or verified project context. If the deck or context is sparse, use clearly marked [placeholders] for missing facts instead of fabricating them.',
-          'A visual plan must name the exact chart, diagram, table, timeline, screenshot, comparison, or process to show and identify the data or asset needed. Recommend a chart only when the slides or project context contain, or explicitly request, the needed data; otherwise use a more suitable visual or visualType "none".',
-          'Build deckPlan sections from the supplied slide order, with a better presentation title, subtitle, opening message, narrative, and a clear note about missing project context.',
-          'Be specific, constructive, concise, and suitable for a student or early-career presenter. For each slide use a short summary and return zero to two high-value actionable suggestions only.',
-          'For decks over 12 slides, keep every contentPlan item and speaker note short so every slide still receives a useful result.',
+          'Analyze and fix all grammar mistakes, spelling typos, awkward phrasing, and clarity issues in the slide copy.',
+          'When slide images or visual graphic assets are attached, use Vision OCR to read slide titles, headings, body text, and visual layout.',
+          'The extracted slide text and visual image evidence are the primary project evidence.',
+          'Do not infer that a slide has no visuals or text when slide images or graphic layout signals exist.',
+          'Never score a slide 0 or call it completely blank when images, text blocks, or visual graphic assets are present.',
+          'Create an extensive, professional, project-related presentation blueprint. For every slide, provide 3 to 6 comprehensive, ready-to-paste improved slide bullet points (contentPlan), a compelling suggested title, clear audience purpose, visual plan, and detailed speaker guidance.',
+          'Every contentPlan item must be complete, high-quality, professional audience-facing slide copy with zero grammar or spelling errors. It must not be a task or instruction and must not begin with Add, Include, Define, Explain, Outline, Describe, Show, Use, Provide, Consider, or Discuss.',
+          'All returned text must be clear, flawless, professional technical English.',
+          'Ground every contentPlan item, summary, strength, and recommendation in the slide text, visual image evidence, or verified project context.',
+          'Use these scoring anchors consistently: 0–20 only for blank or corrupt slides; 21–49 for substantially incomplete slides; 50–69 for understandable slides with material gaps; 70–84 for good slides; 85–100 for excellent, presentation-ready slides.',
+          'The slide summary must begin with what the slide communicates, note any grammar or structural corrections, and then identify the most important evidence-based gap.',
           'Use slide=0 for recommendations that apply to the whole deck.',
         ].join(' '),
       },
       {
         role: 'user',
-        content: `Analyze this ${slides.length}-slide deck and provide the complete structured review.\n\nPROJECT CONTEXT:\n${context || '[No project context was supplied. Use placeholders for details the deck does not establish.]'}\n\nSLIDES:\n${formatSlides(slides)}`,
+        content: userMessageContent,
       },
     ],
   });
