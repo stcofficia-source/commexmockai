@@ -42,15 +42,29 @@ const resumeUpload = multer({
 
 const getAssemblyToken = async (req, res, next) => {
   try {
+    if (!env.ASSEMBLYAI_API_KEY) {
+      return res.status(503).json({
+        success: false,
+        message: "Live transcription is not configured on this server.",
+      });
+    }
     const response = await axios.get(
-      "https://streaming.assemblyai.com/v3/token?expires_in_seconds=600",
+      "https://streaming.assemblyai.com/v3/token?expires_in_seconds=60&max_session_duration_seconds=900",
       {
         headers: { authorization: env.ASSEMBLYAI_API_KEY },
       },
     );
-    res.json({ success: true, token: response.data.token });
+    res.json({
+      success: true,
+      token: response.data.token,
+      expiresInSeconds: response.data.expires_in_seconds || 60,
+    });
   } catch (err) {
-    next(err);
+    logger.error({ err: err.response?.data || err.message }, "AssemblyAI streaming token request failed");
+    res.status(err.response?.status || 502).json({
+      success: false,
+      message: "A live transcription token could not be created.",
+    });
   }
 };
 
