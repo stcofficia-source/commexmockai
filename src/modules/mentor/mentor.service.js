@@ -1,5 +1,4 @@
 const OpenAI = require('openai');
-const axios = require('axios');
 const env = require('../../config/env');
 const logger = require('../../core/logger');
 const { captureOpenAiUsage } = require('../../core/ai-usage-cost.service');
@@ -52,9 +51,11 @@ function safeHistory(history) {
   });
 }
 
+const phpApiClient = require('../../core/php-api-client');
+
 async function getStc(path, token) {
   try {
-    const response = await axios.get(`${env.STC_API_BASE_URL}${path}`, {
+    const response = await phpApiClient.get(path, {
       headers: token ? { Authorization: `Bearer ${token}` } : {},
       timeout: 8000,
     });

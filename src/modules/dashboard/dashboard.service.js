@@ -2,21 +2,16 @@
  * Dashboard Module — Service
  * Aggregates data from the PHP backend (stc_api) for dashboard views
  */
-const axios = require('axios');
-const env = require('../../config/env');
+const phpApiClient = require('../../core/php-api-client');
 const logger = require('../../core/logger');
-
-// PHP backend base URL
-const PHP_API_BASE = env.STC_API_BASE_URL || 'https://stccommex.com';
 
 /**
  * Helper to proxy requests to the PHP backend
  */
 async function phpGet(path, authHeader) {
   try {
-    const response = await axios.get(`${PHP_API_BASE}${path}`, {
+    const response = await phpApiClient.get(path, {
       headers: {
-        'Content-Type': 'application/json',
         ...(authHeader ? { Authorization: authHeader } : {}),
       },
       timeout: 10000,

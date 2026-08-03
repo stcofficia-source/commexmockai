@@ -2,7 +2,22 @@
  * Environment Configuration
  * Loads and validates environment variables
  */
-require('dotenv').config();
+const fs = require('fs');
+const path = require('path');
+const dotenv = require('dotenv');
+
+const rootDir = path.resolve(__dirname, '../../');
+const nodeEnv = process.env.NODE_ENV || 'development';
+const envFiles = nodeEnv === 'production' 
+  ? ['.env.production', '.env.local', '.env']
+  : ['.env.local', '.env.development', '.env'];
+
+for (const file of envFiles) {
+  const fullPath = path.join(rootDir, file);
+  if (fs.existsSync(fullPath)) {
+    dotenv.config({ path: fullPath });
+  }
+}
 
 const env = {
   // Server
@@ -56,7 +71,7 @@ const env = {
   ASSEMBLYAI_SPEECH_MODELS: process.env.ASSEMBLYAI_SPEECH_MODELS || '',
 
   // STC API
-  STC_API_BASE_URL: process.env.STC_API_BASE_URL || 'http://192.168.29.244:8000',
+  STC_API_BASE_URL: process.env.STC_API_BASE_URL || '',
   STC_ASSESSMENT_API_PREFIX: process.env.STC_ASSESSMENT_API_PREFIX || '/v1/psychometric-assessments',
 
   // Session

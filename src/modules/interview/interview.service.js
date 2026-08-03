@@ -8,6 +8,7 @@ const { runBillableAiOperation } = require('../../core/credit-billing.service');
 const sttService = require('../stt/stt.service');
 const ttsService = require('../tts/tts.service');
 const logger = require('../../core/logger');
+const phpApiClient = require('../../core/php-api-client');
 const axios = require('axios');
 const env = require('../../config/env');
 const { DEPARTMENTS, JOB_ROLES } = require('./interview.data');
@@ -98,7 +99,7 @@ function phpReadError(err, fallbackMessage) {
 async function axiosRequestPreserveMethodOnRedirect(config, maxRedirects = 3) {
   const requestConfig = { ...config, maxRedirects: 0 };
   try {
-    return await axios(requestConfig);
+    return await phpApiClient(requestConfig);
   } catch (err) {
     const status = err?.response?.status;
     const location = err?.response?.headers?.location;
@@ -624,7 +625,7 @@ class InterviewService {
    */
   async getReport(sessionId, token) {
     try {
-      const resp = await axios.get(`${env.STC_API_BASE_URL}/v1/mock/interviews/${sessionId}/report`, {
+      const resp = await phpApiClient.get(`/v1/mock/interviews/${sessionId}/report`, {
         headers: token ? { Authorization: `Bearer ${token}` } : {}
       });
       return resp.data.data;
@@ -639,7 +640,7 @@ class InterviewService {
    */
   async getHistory(userId, page, limit, token) {
     try {
-      const resp = await axios.get(`${env.STC_API_BASE_URL}/v1/mock/history`, {
+      const resp = await phpApiClient.get('/v1/mock/history', {
         params: { user_id: userId, page, limit },
         headers: token ? { Authorization: `Bearer ${token}` } : {}
       });

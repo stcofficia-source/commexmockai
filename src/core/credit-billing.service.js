@@ -1,5 +1,4 @@
-const axios = require('axios');
-const env = require('../config/env');
+const phpApiClient = require('./php-api-client');
 const {
   collectAiUsage,
   priceAiUsage,
@@ -24,8 +23,8 @@ function requireAuthorization(authorization) {
 async function assertAiCreditAccess(authorization) {
   requireAuthorization(authorization);
   try {
-    const response = await axios.get(
-      `${String(env.STC_API_BASE_URL).replace(/\/+$/, '')}/v1/credits/wallet`,
+    const response = await phpApiClient.get(
+      '/v1/credits/wallet',
       { headers: { Authorization: authorization }, timeout: 10000 },
     );
     const payload = response.data?.data || response.data || {};
@@ -46,8 +45,8 @@ async function assertAiCreditAccess(authorization) {
 async function settleAiUsage({ authorization, serviceKey, usage, reference = '' }) {
   const priced = priceAiUsage(usage);
   try {
-    const response = await axios.post(
-      `${String(env.STC_API_BASE_URL).replace(/\/+$/, '')}/v1/credits/usage/settle`,
+    const response = await phpApiClient.post(
+      '/v1/credits/usage/settle',
       {
         request_id: priced.requestId,
         service_key: serviceKey,
@@ -60,7 +59,7 @@ async function settleAiUsage({ authorization, serviceKey, usage, reference = '' 
         currency: priced.currency,
       },
       {
-        headers: { 'Content-Type': 'application/json', Authorization: authorization },
+        headers: { Authorization: authorization },
         timeout: 10000,
       },
     );

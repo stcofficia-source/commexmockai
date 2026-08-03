@@ -1,4 +1,3 @@
-const axios = require('axios');
 const crypto = require('crypto');
 const env = require('../../config/env');
 const { extractText } = require('../documents/document-parser.service');
@@ -84,13 +83,14 @@ function upstreamError(error, action) {
   return wrapped;
 }
 
+const phpApiClient = require('../../core/php-api-client');
+
 async function request(method, path, authHeader, data) {
-  if (!phpBaseUrl) throw Object.assign(new Error('STC_API_BASE_URL is not configured.'), { statusCode: 503, isOperational: true });
   try {
-    const response = await axios({
+    const response = await phpApiClient({
       method,
-      url: `${phpBaseUrl}${path}`,
-      headers: { 'Content-Type': 'application/json', ...(authHeader ? { Authorization: authHeader } : {}) },
+      url: path,
+      headers: { ...(authHeader ? { Authorization: authHeader } : {}) },
       data,
       timeout: 20000,
     });

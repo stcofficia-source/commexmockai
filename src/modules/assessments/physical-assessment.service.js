@@ -1,18 +1,11 @@
-const axios = require('axios');
+const phpApiClient = require('../../core/php-api-client');
 const env = require('../../config/env');
 
 const stcApiBaseOrigin = (env.STC_API_BASE_URL || '').replace(/\/+$/, '');
 const stcAssessmentPrefix = (env.STC_ASSESSMENT_API_PREFIX || '/v1/psychometric-assessments').replace(/\/+$/, '');
 
-// Dedicated reusable Axios instance for stc_api communication
-const stcApiClient = axios.create({
-  baseURL: `${stcApiBaseOrigin}${stcAssessmentPrefix}`,
-  timeout: 15000,
-  maxRedirects: 0,
-  headers: {
-    'Content-Type': 'application/json',
-  },
-});
+// Dedicated reusable API instance for stc_api communication
+const stcApiClient = phpApiClient;
 
 function headers(token) {
   return token ? { Authorization: `Bearer ${token}` } : {};
