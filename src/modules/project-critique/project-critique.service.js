@@ -31,12 +31,19 @@ async function persist(authHeader, payload) {
   }
 }
 
+function assertNoZipFiles(files) {
+  if (Array.isArray(files) && files.some((file) => String(file.originalname || '').toLowerCase().endsWith('.zip'))) {
+    throw new ValidationError('ZIP archives (.zip) are restricted and not supported. Please upload PDF, Word (.doc, .docx), or text files.');
+  }
+}
+
 async function analyze({ studentId, authHeader, payload, files }) {
   if (!studentId) throw new ValidationError('Authentication is required to analyze a project.');
   const title = String(payload.title || '').trim().slice(0, 190);
   const focus = list(payload.focus);
   if (!title) throw new ValidationError('Project title is required.');
   if (!focus.length) throw new ValidationError('Select at least one feedback area.');
+  assertNoZipFiles(files);
   if (!files.length && !payload.description?.trim() && !payload.reference?.trim()) {
     throw new ValidationError('Upload at least one project file or provide a project description.');
   }
@@ -91,6 +98,7 @@ async function analyze({ studentId, authHeader, payload, files }) {
 async function suggestMetadata({ studentId, authHeader, payload, files }) {
   if (!studentId) throw new ValidationError('Authentication is required to read project details.');
   if (!files.length) throw new ValidationError('Upload at least one project file before using AI auto-fill.');
+  assertNoZipFiles(files);
   const types = submissionTypes(payload.submissionTypes);
   if (!types.length) throw new ValidationError('Project submission types are unavailable. Please enter the details manually.');
 
