@@ -5,21 +5,21 @@ const { ValidationError } = require('../../core/errors');
 const upload = multer({
   storage: multer.memoryStorage(),
   limits: {
-    fileSize: 25 * 1024 * 1024,
-    files: 10,
+    fileSize: 10 * 1024 * 1024,
+    files: 3,
     fields: 20,
     parts: 30,
   },
-}).array('files', 10);
+}).array('files', 3);
 const userId = (req) => req.user?.id || req.user?.userId || req.user?.user_id;
 
 function analyze(req, res, next) {
   upload(req, res, async (uploadError) => {
     if (uploadError) {
       const message = uploadError.code === 'LIMIT_FILE_SIZE'
-        ? 'Each file must be 25 MB or smaller.'
+        ? 'Each file must be 10 MB or smaller.'
         : uploadError.code === 'LIMIT_FILE_COUNT'
-          ? 'Upload at most 10 files.'
+          ? 'Upload at most 3 files.'
           : 'The project upload is invalid or exceeds a safety limit.';
       return next(new ValidationError(message));
     }
@@ -34,9 +34,9 @@ function suggestMetadata(req, res, next) {
   upload(req, res, async (uploadError) => {
     if (uploadError) {
       const message = uploadError.code === 'LIMIT_FILE_SIZE'
-        ? 'Each file must be 25 MB or smaller.'
+        ? 'Each file must be 10 MB or smaller.'
         : uploadError.code === 'LIMIT_FILE_COUNT'
-          ? 'Upload at most 10 files.'
+          ? 'Upload at most 3 files.'
           : 'The project upload is invalid or exceeds a safety limit.';
       return next(new ValidationError(message));
     }

@@ -799,7 +799,7 @@ Return one valid JSON object only with this exact shape:
   }]
 }
 
-Return 2-8 projectContent sections when the evidence has identifiable sections. For a presentation, return one section for every substantive slide, up to 8 slides. Return at most 8 strengths, 8 improvements, 8 recommendations, 6 best practices, 6 suggestions, 6 practiceGuidance items, 6 improvementPlan items, 8 findings per area, and 16 code findings. For document-only evidence, hasSourceCode must be false and codeFindings must be empty. The overall score must measure only the quality/completeness of the evidence that was actually reviewed; it must not be an invented score for an unprovided application.`,
+Return 2-4 projectContent sections when the evidence has identifiable sections. For a presentation, return one section for every substantive slide, up to 5 slides. Return at most 4 strengths, 4 improvements, 4 recommendations, 3 best practices, 3 suggestions, 3 practiceGuidance items, 3 improvementPlan items, 4 findings per area, and at most 6 code findings. For document-only evidence, hasSourceCode must be false and codeFindings must be empty. The overall score must measure only the quality/completeness of the evidence that was actually reviewed; it must not be an invented score for an unprovided application.`,
     {
       title,
       submissionType,
@@ -810,12 +810,12 @@ Return 2-8 projectContent sections when the evidence has identifiable sections. 
         name: file.name,
         type: file.mimeType,
         extension: file.extension,
-        text: String(file.text || '').slice(0, 60000),
+        text: String(file.text || '').slice(0, 30000),
       })),
     },
     {
-      model: env.PROJECT_CRITIQUE_MODEL,
-      maxOutputTokens: env.PROJECT_CRITIQUE_MAX_OUTPUT_TOKENS,
+      model: env.PROJECT_CRITIQUE_MODEL || 'gpt-4o-mini',
+      maxOutputTokens: Math.min(3000, Number(env.PROJECT_CRITIQUE_MAX_OUTPUT_TOKENS) || 3000),
     },
   );
   const rawEvidenceProfile = result.evidenceProfile && typeof result.evidenceProfile === 'object'

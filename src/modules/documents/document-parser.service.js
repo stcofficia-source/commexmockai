@@ -103,14 +103,20 @@ function archiveText(buffer) {
 async function pdfTextWithPageMarkers(buffer) {
   try {
     let pageNumber = 0;
+    let accumulatedLength = 0;
     const parsed = await pdfParse(buffer, {
+      max: 30,
       pagerender: async (page) => {
         pageNumber += 1;
+        if (pageNumber > 30 || accumulatedLength >= TEXT_LIMIT) {
+          return '';
+        }
         const content = await page.getTextContent({ normalizeWhitespace: true, disableCombineTextItems: false });
         const pageText = content.items
           .map((item) => String(item.str || '').trim())
           .filter(Boolean)
           .join(' ');
+        accumulatedLength += pageText.length;
         return `\n[Page ${pageNumber}]\n${pageText}`;
       },
     });

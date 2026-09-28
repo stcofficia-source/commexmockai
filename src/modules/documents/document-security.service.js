@@ -9,9 +9,9 @@ const env = require('../../config/env');
 const logger = require('../../core/logger');
 const { ValidationError } = require('../../core/errors');
 
-const MAX_FILE_BYTES = 25 * 1024 * 1024;
-const MAX_TOTAL_BYTES = 100 * 1024 * 1024;
-const MAX_FILES = 10;
+const MAX_FILE_BYTES = 10 * 1024 * 1024;
+const MAX_TOTAL_BYTES = 20 * 1024 * 1024;
+const MAX_FILES = 3;
 const MAX_ARCHIVE_ENTRIES = 250;
 const MAX_ARCHIVE_EXPANDED_BYTES = 40 * 1024 * 1024;
 const EICAR_SIGNATURE = 'X5O!P%@AP[4\\PZX54(P^)7CC)7}$EICAR-STANDARD-ANTIVIRUS-TEST-FILE!$H+H*';
@@ -123,7 +123,7 @@ async function validateFile(file) {
     throw securityError(`.${extension || 'unknown'} files are not supported. Upload a PDF, DOCX, PPTX, text/code file, or safe ZIP project.`);
   }
   if (file.size > MAX_FILE_BYTES) {
-    throw securityError(`${file.originalname} exceeds the 25 MB per-file limit.`);
+    throw securityError(`${file.originalname} exceeds the 10 MB per-file limit.`);
   }
 
   const detected = await detectFileType(file.buffer).catch(() => undefined);
@@ -140,26 +140,36 @@ async function validateFile(file) {
 
 async function clamScanner() {
   if (scannerPromise) return scannerPromise;
+  let detectedSocket = env.CLAMAV_SOCKET || false;
+  if (!detectedSocket) {
+    try {
+      const fsSync = require('fs');
+      if (fsSync.existsSync('/var/run/clamav/clamd.ctl')) {
+        detectedSocket = '/var/run/clamav/clamd.ctl';
+      }
+    } catch {}
+  }
+
   scannerPromise = new NodeClam().init({
     removeInfected: false,
     quarantineInfected: false,
     scanRecursively: false,
     clamscan: {
-      path: env.CLAMAV_CLAMSCAN_PATH,
+      path: env.CLAMAV_CLAMSCAN_PATH || '/usr/bin/clamscan',
       scanArchives: true,
       active: true,
     },
     clamdscan: {
-      socket: env.CLAMAV_SOCKET || false,
+      socket: detectedSocket,
       host: env.CLAMAV_HOST || false,
       port: env.CLAMAV_HOST ? env.CLAMAV_PORT : false,
-      timeout: env.CLAMAV_TIMEOUT_MS,
+      timeout: env.CLAMAV_TIMEOUT_MS || 6000,
       localFallback: true,
-      path: env.CLAMAV_CLAMDSCAN_PATH,
+      path: env.CLAMAV_CLAMDSCAN_PATH || '/usr/bin/clamdscan',
       multiscan: true,
       active: true,
     },
-    preference: env.CLAMAV_SOCKET || env.CLAMAV_HOST ? 'clamdscan' : 'clamscan',
+    preference: detectedSocket || env.CLAMAV_HOST ? 'clamdscan' : 'clamscan',
   }).catch((error) => {
     scannerPromise = null;
     throw error;
@@ -173,14 +183,25 @@ async function scanWithClam(file) {
   const filePath = path.join(directory, safeName);
   try {
     await fs.writeFile(filePath, file.buffer, { flag: 'wx', mode: 0o600 });
-    const scanner = await clamScanner();
-    const result = await scanner.isInfected(filePath);
-    if (result?.isInfected) {
-      throw securityError(`${file.originalname} contains malware and was rejected.`);
-    }
-    return { engine: 'ClamAV', version: await scanner.getVersion().catch(() => '') };
+    const timeoutMs = env.CLAMAV_TIMEOUT_MS || 6000;
+
+    const scanOp = async () => {
+      const scanner = await clamScanner();
+      const result = await scanner.isInfected(filePath);
+      if (result?.isInfected) {
+        throw securityError(`${file.originalname} contains malware and was rejected.`);
+      }
+      return { engine: 'ClamAV', version: await scanner.getVersion().catch(() => '') };
+    };
+
+    const timeoutOp = new Promise((_, reject) => {
+      const timer = setTimeout(() => reject(new Error(`ClamAV scan timed out after ${timeoutMs}ms`)), timeoutMs);
+      if (timer?.unref) timer.unref();
+    });
+
+    return await Promise.race([scanOp(), timeoutOp]);
   } finally {
-    await fs.rm(directory, { recursive: true, force: true });
+    await fs.rm(directory, { recursive: true, force: true }).catch(() => {});
   }
 }
 
@@ -188,7 +209,7 @@ async function scanProjectFiles(files) {
   if (!Array.isArray(files) || !files.length) throw securityError('Upload at least one project file.');
   if (files.length > MAX_FILES) throw securityError(`Upload at most ${MAX_FILES} files per critique.`);
   const totalBytes = files.reduce((total, file) => total + Number(file.size || 0), 0);
-  if (totalBytes > MAX_TOTAL_BYTES) throw securityError('The combined upload size cannot exceed 100 MB.');
+  if (totalBytes > MAX_TOTAL_BYTES) throw securityError('The combined upload size cannot exceed 20 MB.');
 
   const results = [];
   for (const file of files) {
