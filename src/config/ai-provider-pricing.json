@@ -6,6 +6,18 @@
     "USD_INR": 96.1856
   },
   "providers": {
+    "assemblyai": {
+      "models": {
+        "universal-3-5-pro": {
+          "currency": "USD",
+          "perMinute": 0.0035
+        },
+        "universal-2": {
+          "currency": "USD",
+          "perMinute": 0.0025
+        }
+      }
+    },
     "openai": {
       "models": {
         "gpt-4o-mini": {

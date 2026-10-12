@@ -64,6 +64,10 @@ const { authenticate } = require('./core/middleware/auth');
 // Mock Interview Module Routes (Protected)
 app.use('/api/mock', authenticate, require('./modules/interview/interview.routes'));
 
+// Word Practice uses the same protected AI boundary as Mock Interview. PHP
+// retains learning progress and wallet data; provider calls never reach PHP.
+app.use('/api/english-practice', authenticate, require('./modules/english-practice/word-assessment.routes'));
+
 // Browser mock interviews use their own fast REST/socket contract. The mobile
 // app remains on /api/mock and its existing WebSocket path.
 app.use('/api/web/mock-interviews', authenticate, require('./modules/interview/web-interview.routes'));

@@ -20,9 +20,25 @@ function requireAuthorization(authorization) {
   }
 }
 
-async function assertAiCreditAccess(authorization) {
+async function assertAiCreditAccess(authorization, serviceKey = '') {
   requireAuthorization(authorization);
   try {
+    if (serviceKey) {
+      const response = await phpApiClient.post(
+        '/v1/credits/usage/quote',
+        { service_key: serviceKey, usage_units: 1 },
+        { headers: { Authorization: authorization }, timeout: 10000 },
+      );
+      const quote = response.data?.data || response.data || {};
+      if (!quote.allowed) {
+        const error = new Error('Insufficient credits.');
+        error.statusCode = 402;
+        error.isOperational = true;
+        throw error;
+      }
+      return quote;
+    }
+
     const response = await phpApiClient.get(
       '/v1/credits/wallet',
       { headers: { Authorization: authorization }, timeout: 10000 },
@@ -80,7 +96,7 @@ async function runBillableAiOperation({
     throw new TypeError('A service key and AI operation are required for credit settlement.');
   }
 
-  await assertAiCreditAccess(authorization);
+  await assertAiCreditAccess(authorization, serviceKey);
   let result;
   let operationError;
   try {

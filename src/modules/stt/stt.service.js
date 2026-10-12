@@ -8,7 +8,7 @@ const { AppError } = require('../../core/errors');
 const apiClient = require('../../core/php-api-client');
 
 const ASSEMBLYAI_BASE = 'https://api.assemblyai.com/v2';
-const DEFAULT_SPEECH_MODELS = ['universal-2'];
+const DEFAULT_SPEECH_MODELS = ['universal-3-5-pro', 'universal-2'];
 
 function getSpeechModels() {
   const raw = (env.ASSEMBLYAI_SPEECH_MODELS || '').trim();
@@ -26,7 +26,7 @@ function getSpeechModels() {
  * @param {string} contentType - Audio content type (e.g., audio/webm, audio/wav)
  * @returns {Promise<string>} Transcribed text
  */
-async function transcribeAudio(audioBuffer, contentType = 'audio/webm') {
+async function transcribeAudioDetailed(audioBuffer, contentType = 'audio/webm', options = {}) {
   if (!env.ASSEMBLYAI_API_KEY) {
     logger.error('ASSEMBLYAI_API_KEY is not configured');
     throw new AppError(
@@ -61,20 +61,21 @@ async function transcribeAudio(audioBuffer, contentType = 'audio/webm') {
       `${ASSEMBLYAI_BASE}/transcript`,
       {
         audio_url: audioUrl,
-        language_code: 'en',
+        language_code: options.languageCode || 'en',
         // `speech_model` is deprecated by AssemblyAI; use `speech_models` instead.
-        // As of 2026-04-21, accepted values include: universal-3-pro, universal-2.
+        // Keep the supported fallback order: current high-accuracy model first,
+        // then Universal-2 for broad language coverage.
         speech_models: getSpeechModels(),
         punctuate: true,
         format_text: true,
         disfluencies: false, // REMOVES "Yeah, Yeah, Uh, Um"
-        word_boost: [
+        keyterms_prompt: Array.from(new Set([
+          ...(Array.isArray(options.keyterms) ? options.keyterms : []),
           'CGPA', 'OOPS', 'Fullstack', 'Frontend', 'Backend', 
           'Internship', 'ZOHO', 'TCS', 'Cognizant', 'Infosys', 
           'ReactJS', 'NodeJS', 'MongoDB', 'REST API', 'SQL',
-          'Semester', 'Placement', 'Recruitment', 'HR'
-        ],
-        boost_param: 'high'
+          'Semester', 'Placement', 'Recruitment', 'HR',
+        ])),
       },
       {
         headers: {
@@ -91,7 +92,12 @@ async function transcribeAudio(audioBuffer, contentType = 'audio/webm') {
       logger.info({ transcriptId }, '✅ AssemblyAI: Transcription completed');
     }
     
-    return result;
+    return {
+      requestId: transcriptId,
+      text: result.text || '',
+      audioDurationSeconds: Number(result.audio_duration) || 0,
+      model: result.speech_model_used || getSpeechModels()[0],
+    };
   } catch (err) {
     if (err instanceof AppError) throw err;
     const errorMsg = err.response?.data?.error || err.message;
@@ -104,6 +110,11 @@ async function transcribeAudio(audioBuffer, contentType = 'audio/webm') {
   }
 }
 
+async function transcribeAudio(audioBuffer, contentType = 'audio/webm', options = {}) {
+  const result = await transcribeAudioDetailed(audioBuffer, contentType, options);
+  return result.text;
+}
+
 /**
  * Poll AssemblyAI for transcription completion
  */
@@ -114,11 +125,11 @@ async function pollTranscription(transcriptId, maxAttempts = 60) {
         headers: { authorization: env.ASSEMBLYAI_API_KEY },
       });
 
-      const { status, text, error } = res.data;
+      const { status, error } = res.data;
 
       if (status === 'completed') {
-        logger.debug({ transcriptId, text: text?.substring(0, 50) }, 'Transcription completed');
-        return text || '';
+        logger.debug({ transcriptId, text: res.data.text?.substring(0, 50) }, 'Transcription completed');
+        return res.data;
       }
 
       if (status === 'error') {
@@ -163,5 +174,6 @@ function passthrough(text) {
 
 module.exports = {
   transcribeAudio,
+  transcribeAudioDetailed,
   passthrough,
 };

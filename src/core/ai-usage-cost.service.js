@@ -117,11 +117,14 @@ function priceAiUsage(usage) {
   const uncachedPromptTokens = promptTokens - cachedPromptTokens;
   const completionTokens = finiteNonNegative(usage.completionTokens);
 
-  const providerCost = (
-    (uncachedPromptTokens * finiteNonNegative(modelRate.inputPerMillion))
-    + (cachedPromptTokens * finiteNonNegative(modelRate.cachedInputPerMillion))
-    + (completionTokens * finiteNonNegative(modelRate.outputPerMillion))
-  ) / 1_000_000;
+  const durationSeconds = finiteNonNegative(usage.durationSeconds);
+  const providerCost = finiteNonNegative(modelRate.perMinute) > 0
+    ? (durationSeconds / 60) * finiteNonNegative(modelRate.perMinute)
+    : (
+      (uncachedPromptTokens * finiteNonNegative(modelRate.inputPerMillion))
+      + (cachedPromptTokens * finiteNonNegative(modelRate.cachedInputPerMillion))
+      + (completionTokens * finiteNonNegative(modelRate.outputPerMillion))
+    ) / 1_000_000;
 
   const billingCost = convertCurrency(
     providerCost,
@@ -137,6 +140,7 @@ function priceAiUsage(usage) {
     currency: String(catalog.billingCurrency).toUpperCase(),
     pricingVersion: String(catalog.version || ''),
     pricingEffectiveAt: String(catalog.effectiveAt || ''),
+    durationSeconds,
   };
 }
 
